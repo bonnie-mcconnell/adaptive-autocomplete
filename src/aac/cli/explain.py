@@ -19,7 +19,7 @@ def run(
     explanations = engine.explain(text)[:limit]
 
     if not explanations:
-        print("(no explanations available — no suggestions produced)")
+        print("(no explanations available - no suggestions produced)")
         return
 
     for exp in explanations:
