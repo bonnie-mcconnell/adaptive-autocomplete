@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TypeAlias
 
 from aac.domain.history import History
 from aac.domain.types import WeightedPredictor
@@ -16,6 +17,8 @@ from aac.ranking.score import ScoreRanker
 # Preset definition
 # ---------------------------------------------------------------------
 
+PresetBuilder: TypeAlias = Callable[[History | None, dict[str, int] | None], AutocompleteEngine]
+
 @dataclass(frozen=True)
 class EnginePreset:
     """
@@ -25,25 +28,30 @@ class EnginePreset:
     """
     name: str
     description: str
-    build: Callable[[History | None], AutocompleteEngine]
+    build: PresetBuilder
 
 
 # ---------------------------------------------------------------------
 # Preset builders
 # ---------------------------------------------------------------------
 
-def _default_engine(history: History | None) -> AutocompleteEngine:
+def _default_engine(
+    history: History | None,
+    vocabulary: dict[str, int] | None = None,
+) -> AutocompleteEngine:
     history = history or History()
+
+    frequencies = vocabulary or {
+        "hello": 100,
+        "help": 80,
+        "helium": 30,
+        "hero": 50,
+    }
 
     predictors = [
         WeightedPredictor(
             predictor=FrequencyPredictor(
-                frequencies={
-                    "hello": 100,
-                    "help": 80,
-                    "helium": 30,
-                    "hero": 50,
-                }
+                frequencies=frequencies
             ),
             weight=1.0,
         ),
@@ -60,19 +68,21 @@ def _default_engine(history: History | None) -> AutocompleteEngine:
     )
 
 
-def _recency_boosted_engine(history: History | None) -> AutocompleteEngine:
+def _recency_boosted_engine(history: History | None, vocabulary: dict[str, int] | None = None) -> AutocompleteEngine:
     """Engine with explicit recency bias applied at ranking time."""
     history = history or History()
+
+    frequencies = vocabulary or {
+        "hello": 100,
+        "help": 80,
+        "helium": 30,
+        "hero": 50,
+    }
 
     predictors = [
         WeightedPredictor(
             predictor=FrequencyPredictor(
-                frequencies={
-                    "hello": 100,
-                    "help": 80,
-                    "helium": 30,
-                    "hero": 50,
-                }
+                frequencies=frequencies
             ),
             weight=1.0,
         ),
@@ -98,7 +108,7 @@ def _recency_boosted_engine(history: History | None) -> AutocompleteEngine:
     )
 
 
-def _robust_engine(history: History | None) -> AutocompleteEngine:
+def _robust_engine(history: History | None, vocabulary: dict[str, int] | None = None) -> AutocompleteEngine:
     """
     Production-oriented engine:
     - Frequency baseline
@@ -108,26 +118,19 @@ def _robust_engine(history: History | None) -> AutocompleteEngine:
     """
     history = history or History()
 
-    vocabulary = [
-        "hello",
-        "help",
-        "helium",
-        "hero",
-        "hex",
-        "heap",
-    ]
+    frequencies = vocabulary or {
+        "hello": 100,
+        "help": 80,
+        "helium": 30,
+        "hero": 50,
+        "hex": 20,
+        "heap": 25,
+    }
 
     predictors = [
         WeightedPredictor(
             predictor=FrequencyPredictor(
-                frequencies={
-                    "hello": 100,
-                    "help": 80,
-                    "helium": 30,
-                    "hero": 50,
-                    "hex": 20,
-                    "heap": 25,
-                }
+                frequencies=frequencies
             ),
             weight=1.0,
         ),
@@ -137,7 +140,7 @@ def _robust_engine(history: History | None) -> AutocompleteEngine:
         ),
         WeightedPredictor(
             predictor=EditDistancePredictor(
-                vocabulary=vocabulary,
+                vocabulary=frequencies.keys(),
                 max_distance=2,
             ),
             weight=0.4,  # intentionally weak fallback signal
@@ -160,16 +163,21 @@ def _robust_engine(history: History | None) -> AutocompleteEngine:
     )
 
 
-def _stateless_engine(_: History | None) -> AutocompleteEngine:
+def _stateless_engine(
+    _: History | None,
+    vocabulary: dict[str, int] | None = None,
+) -> AutocompleteEngine:
+    frequencies = vocabulary or {
+        "hello": 100,
+        "help": 80,
+        "helium": 30,
+        "hero": 50,
+    }
+
     predictors = [
         WeightedPredictor(
             predictor=FrequencyPredictor(
-                frequencies={
-                    "hello": 100,
-                    "help": 80,
-                    "helium": 30,
-                    "hero": 50,
-                }
+                frequencies=frequencies
             ),
             weight=1.0,
         ),
@@ -228,12 +236,12 @@ def get_preset(name: str) -> EnginePreset:
         ) from None
 
 
-def create_engine(preset: str) -> AutocompleteEngine:
+def create_engine(preset: str, vocabulary: dict[str, int] | None = None) -> AutocompleteEngine:
     """
     Backwards-compatible factory.
     Prefer build_engine(...) in app layer.
     """
-    return get_preset(preset).build(None)
+    return get_preset(preset).build(None, vocabulary)
 
 
 def describe_presets() -> str:
