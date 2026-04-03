@@ -92,6 +92,8 @@ Four operating modes because different contexts need different behaviour:
 
 One thing I didn't expect: `default` is slightly faster than `stateless`. The history lookup in `default` happens to hit a warm code path that the stateless variant doesn't go through. I verified this across multiple runs: it's consistent, not noise.
 
+These numbers were measured against a 6-word vocabulary. Latency scales with vocabulary size - robust in particular, since edit-distance runs against every word on every call.
+
 ---
 
 ## Architecture
@@ -124,7 +126,7 @@ A few invariants I enforced throughout:
 
 **The history model is too naive.** Right now it counts raw selections, so something selected 80 times six months ago has the same weight as something selected twice yesterday. The `recency` preset fixes this with exponential decay, but the better solution is to build time-aware history into the core model from the start rather than patching it in a preset.
 
-**The preset system is a leaky abstraction.** Presets configure the internal wiring of the engine - which predictor, which ranker, whether typo recovery is on. But the line between "what's a preset" and "what's a configuration option" is fuzzy and I never properly resolved it. If I were starting over, I'd remove presets entirely and let callers pass in their own predictor and ranker stack. That would make it more flexible and easier to test combinations.
+**The preset system is a leaky abstraction.**  Presets now accept a custom vocabulary, but the deeper problem remains: the line between "what's a preset" and "what's a configuration option" is fuzzy. If I were starting over, I'd remove presets entirely and let callers pass in their own predictor and ranker stack directly. That would make it more flexible and easier to test combinations.
 
 **No persistence.** History resets when the process exits. For a real use case you'd need to serialise history to disk or a database. It's on the TODO list but not implemented.
 
