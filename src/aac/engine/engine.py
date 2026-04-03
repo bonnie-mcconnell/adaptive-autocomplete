@@ -141,15 +141,15 @@ class AutocompleteEngine:
         but must not add or remove entries.
         """
         ranked = scored
-        original_ids = {id(s) for s in ranked}
+        original_values = {s.suggestion.value for s in ranked}
 
         for ranker in self._rankers:
             ranked = ranker.rank(ctx.text, ranked)
 
-            assert {id(s) for s in ranked} == original_ids, (
+            assert {s.suggestion.value for s in ranked} == original_values, (
                 f"Ranker {ranker.__class__.__name__} modified suggestion set"
             )
-
+            
         for s in ranked:
             if not math.isfinite(s.score):
                 raise ValueError(
