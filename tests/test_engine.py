@@ -1,4 +1,4 @@
-from aac.domain.types import ScoredSuggestion, Suggestion
+from aac.domain.types import ScoredSuggestion, Suggestion, CompletionContext
 from aac.engine import AutocompleteEngine
 
 
@@ -7,7 +7,7 @@ class FakePredictor:
         self.name = name
         self._suggestions = suggestions
 
-    def predict(self, text: str) -> list[ScoredSuggestion]:
+    def predict(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
         return self._suggestions
 
 
