@@ -37,7 +37,7 @@ def run_benchmark(name: str, texts: Iterable[str]) -> float:
 def main() -> None:
     presets = ["stateless", "default", "recency", "robust"]
 
-    print(f"Benchmarking {len(TEXTS):,} suggest calls\n")
+    print(f"Benchmarking {len(TEXTS):,} suggest calls (vocabulary: 6 words)\n")
 
     for name in presets:
         elapsed = run_benchmark(name, TEXTS)
