@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from aac.data import load_english_frequencies
 from aac.domain.history import History
 from aac.domain.types import WeightedPredictor
 from aac.engine.engine import AutocompleteEngine
@@ -17,7 +18,11 @@ from aac.ranking.score import ScoreRanker
 # Preset definition
 # ---------------------------------------------------------------------
 
-PresetBuilder: TypeAlias = Callable[[History | None, dict[str, int] | None], AutocompleteEngine]
+PresetBuilder: TypeAlias = Callable[
+    [History | None, Mapping[str, int] | None],
+    AutocompleteEngine,
+]
+
 
 @dataclass(frozen=True)
 class EnginePreset:
@@ -25,10 +30,26 @@ class EnginePreset:
     Named, validated engine composition.
 
     A preset represents intent, not configuration detail.
+    Metadata fields drive describe_presets() output — update them
+    here when adding or changing a preset, not in describe_presets().
     """
     name: str
     description: str
     build: PresetBuilder
+    predictors: tuple[str, ...]
+    ranking: str
+    learning: str
+
+
+# ---------------------------------------------------------------------
+# Default vocabulary
+#
+# Loaded once at import time and shared across all preset builders.
+# Using the cached load function means the JSON file is read exactly
+# once regardless of how many presets are constructed.
+# ---------------------------------------------------------------------
+
+_DEFAULT_VOCABULARY: Mapping[str, int] = load_english_frequencies()
 
 
 # ---------------------------------------------------------------------
@@ -37,22 +58,14 @@ class EnginePreset:
 
 def _default_engine(
     history: History | None,
-    vocabulary: dict[str, int] | None = None,
+    vocabulary: Mapping[str, int] | None = None,
 ) -> AutocompleteEngine:
     history = history or History()
-
-    frequencies = vocabulary or {
-        "hello": 100,
-        "help": 80,
-        "helium": 30,
-        "hero": 50,
-    }
+    frequencies = vocabulary or _DEFAULT_VOCABULARY
 
     predictors = [
         WeightedPredictor(
-            predictor=FrequencyPredictor(
-                frequencies=frequencies
-            ),
+            predictor=FrequencyPredictor(frequencies=frequencies),
             weight=1.0,
         ),
         WeightedPredictor(
@@ -68,22 +81,17 @@ def _default_engine(
     )
 
 
-def _recency_boosted_engine(history: History | None, vocabulary: dict[str, int] | None = None) -> AutocompleteEngine:
+def _recency_boosted_engine(
+    history: History | None,
+    vocabulary: Mapping[str, int] | None = None,
+) -> AutocompleteEngine:
     """Engine with explicit recency bias applied at ranking time."""
     history = history or History()
-
-    frequencies = vocabulary or {
-        "hello": 100,
-        "help": 80,
-        "helium": 30,
-        "hero": 50,
-    }
+    frequencies = vocabulary or _DEFAULT_VOCABULARY
 
     predictors = [
         WeightedPredictor(
-            predictor=FrequencyPredictor(
-                frequencies=frequencies
-            ),
+            predictor=FrequencyPredictor(frequencies=frequencies),
             weight=1.0,
         ),
         WeightedPredictor(
@@ -93,7 +101,7 @@ def _recency_boosted_engine(history: History | None, vocabulary: dict[str, int] 
     ]
 
     rankers = [
-        ScoreRanker(),  # establish base relevance
+        ScoreRanker(),
         DecayRanker(
             history=history,
             decay=DecayFunction(half_life_seconds=3600),
@@ -108,30 +116,23 @@ def _recency_boosted_engine(history: History | None, vocabulary: dict[str, int] 
     )
 
 
-def _robust_engine(history: History | None, vocabulary: dict[str, int] | None = None) -> AutocompleteEngine:
+def _robust_engine(
+    history: History | None,
+    vocabulary: Mapping[str, int] | None = None,
+) -> AutocompleteEngine:
     """
     Production-oriented engine:
     - Frequency baseline
-    - Learned user behavior
-    - Typo tolerance
+    - Learned user behaviour
+    - Typo tolerance via edit distance
     - Recency-aware ranking
     """
     history = history or History()
-
-    frequencies = vocabulary or {
-        "hello": 100,
-        "help": 80,
-        "helium": 30,
-        "hero": 50,
-        "hex": 20,
-        "heap": 25,
-    }
+    frequencies = vocabulary or _DEFAULT_VOCABULARY
 
     predictors = [
         WeightedPredictor(
-            predictor=FrequencyPredictor(
-                frequencies=frequencies
-            ),
+            predictor=FrequencyPredictor(frequencies=frequencies),
             weight=1.0,
         ),
         WeightedPredictor(
@@ -165,20 +166,13 @@ def _robust_engine(history: History | None, vocabulary: dict[str, int] | None = 
 
 def _stateless_engine(
     _: History | None,
-    vocabulary: dict[str, int] | None = None,
+    vocabulary: Mapping[str, int] | None = None,
 ) -> AutocompleteEngine:
-    frequencies = vocabulary or {
-        "hello": 100,
-        "help": 80,
-        "helium": 30,
-        "hero": 50,
-    }
+    frequencies = vocabulary or _DEFAULT_VOCABULARY
 
     predictors = [
         WeightedPredictor(
-            predictor=FrequencyPredictor(
-                frequencies=frequencies
-            ),
+            predictor=FrequencyPredictor(frequencies=frequencies),
             weight=1.0,
         ),
     ]
@@ -199,21 +193,33 @@ PRESETS: dict[str, EnginePreset] = {
         name="default",
         description="Balanced frequency + history-based autocomplete",
         build=_default_engine,
+        predictors=("frequency", "history"),
+        ranking="score-based",
+        learning="enabled",
     ),
     "recency": EnginePreset(
         name="recency",
         description="History-aware autocomplete with time decay",
         build=_recency_boosted_engine,
+        predictors=("frequency", "history"),
+        ranking="score + recency decay",
+        learning="enabled (time-aware)",
     ),
     "robust": EnginePreset(
         name="robust",
         description="Production-grade autocomplete with typo tolerance and recency learning",
         build=_robust_engine,
+        predictors=("frequency", "history", "edit-distance"),
+        ranking="score + recency decay",
+        learning="enabled (robust)",
     ),
     "stateless": EnginePreset(
         name="stateless",
         description="Pure frequency-based autocomplete (no learning)",
         build=_stateless_engine,
+        predictors=("frequency",),
+        ranking="score-based",
+        learning="disabled",
     ),
 }
 
@@ -236,10 +242,13 @@ def get_preset(name: str) -> EnginePreset:
         ) from None
 
 
-def create_engine(preset: str, vocabulary: dict[str, int] | None = None) -> AutocompleteEngine:
+def create_engine(
+    preset: str,
+    vocabulary: Mapping[str, int] | None = None,
+) -> AutocompleteEngine:
     """
     Backwards-compatible factory.
-    Prefer build_engine(...) in app layer.
+    Prefer build_engine(...) in the app layer.
     """
     return get_preset(preset).build(None, vocabulary)
 
@@ -249,31 +258,18 @@ def describe_presets() -> str:
     Human-readable description of all available presets.
 
     Intended for CLI and documentation output.
+    Descriptions are derived from EnginePreset metadata fields,
+    not hardcoded — update the PRESETS registry to change output.
     """
     lines: list[str] = []
 
     for name in available_presets():
         preset = PRESETS[name]
-        lines.append(f"{preset.name}")
+        lines.append(preset.name)
         lines.append(f"  {preset.description}")
-
-        if name == "default":
-            lines.append("  predictors: frequency, history")
-            lines.append("  ranking: score-based")
-            lines.append("  learning: enabled")
-        elif name == "recency":
-            lines.append("  predictors: frequency, history")
-            lines.append("  ranking: score + recency decay")
-            lines.append("  learning: enabled (time-aware)")
-        elif name == "robust":
-            lines.append("  predictors: frequency, history, edit-distance")
-            lines.append("  ranking: score + recency decay")
-            lines.append("  learning: enabled (robust)")
-        elif name == "stateless":
-            lines.append("  predictors: frequency")
-            lines.append("  ranking: score-based")
-            lines.append("  learning: disabled")
-
+        lines.append(f"  predictors: {', '.join(preset.predictors)}")
+        lines.append(f"  ranking: {preset.ranking}")
+        lines.append(f"  learning: {preset.learning}")
         lines.append("")
 
     return "\n".join(lines).rstrip()
