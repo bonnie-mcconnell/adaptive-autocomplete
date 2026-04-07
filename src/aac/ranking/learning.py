@@ -13,14 +13,30 @@ class LearningRanker(Ranker, LearnsFromHistory):
     """
     Ranker that adapts suggestion ordering based on user selection history.
 
+    Applies a linear boost to suggestions that the user has selected before,
+    causing them to rise in the ranked output over time.
+
+    When to use:
+        Use LearningRanker when your predictor stack does not already
+        incorporate history as a prediction signal. For example, pairing
+        LearningRanker with FrequencyPredictor alone gives you a clean
+        separation: frequency drives candidate generation, history drives
+        re-ranking.
+
+        If your engine includes HistoryPredictor, that predictor already
+        emits history-scored candidates at the prediction layer. Adding
+        LearningRanker on top would count history twice — once in prediction
+        scores and again in the ranking boost. In that configuration, omit
+        LearningRanker and rely on HistoryPredictor's weight instead.
+
     Learning model:
-    - Linear boost: count * boost
-    - Optional dominance bounding to prevent runaway effects
+        boost = min(count * boost_param, dominance_ratio * base_score)
+        final_score = base_score + boost
 
     Invariants:
     - No history signal => original order preserved
-    - Learning is additive (never suppresses)
-    - Learning influence is bounded
+    - Learning is additive (never suppresses candidates)
+    - Learning influence is bounded by dominance_ratio
     - Deterministic and stable
     - Does not mutate inputs or history
     """
@@ -31,7 +47,6 @@ class LearningRanker(Ranker, LearnsFromHistory):
         *,
         boost: float = 1.0,
         dominance_ratio: float = 1.0,
-        config: object | None = None,  # forward compatibility
     ) -> None:
         if boost < 0.0:
             raise ValueError("boost must be non-negative")
@@ -44,8 +59,6 @@ class LearningRanker(Ranker, LearnsFromHistory):
 
         self._boost = boost
         self._dominance_ratio = dominance_ratio
-
-        # config intentionally unused
 
     # --- learning internals ---
 
