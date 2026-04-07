@@ -57,10 +57,3 @@ class HistoryPredictor(Predictor):
             )
 
         return results
-
-    def record(self, ctx: CompletionContext | str, value: str) -> None:
-        """
-        Record user selection feedback for future recall.
-        """
-        ctx = ensure_context(ctx)
-        self._history.record(ctx.text, value)
