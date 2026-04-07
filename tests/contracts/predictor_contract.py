@@ -49,3 +49,5 @@ class PredictorContractTestMixin(ABC):
         predictor.predict(ctx)
 
         assert ctx.text == "hello"
+
+
