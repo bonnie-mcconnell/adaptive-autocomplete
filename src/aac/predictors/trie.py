@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
 
 from aac.domain.types import (
     CompletionContext,
@@ -13,11 +12,20 @@ from aac.domain.types import (
 )
 
 
-@dataclass
 class TrieNode:
-    children: dict[str, TrieNode] = field(default_factory=dict)
-    is_terminal: bool = False
-    value: str | None = None
+    """
+    A single node in the trie.
+
+    Mutable by design — nodes accumulate children during construction.
+    Not a frozen dataclass because the trie is built incrementally.
+    """
+
+    __slots__ = ("children", "is_terminal", "value")
+
+    def __init__(self) -> None:
+        self.children: dict[str, TrieNode] = {}
+        self.is_terminal: bool = False
+        self.value: str | None = None
 
 
 class Trie:
@@ -59,7 +67,13 @@ class Trie:
 
 class TriePrefixPredictor(Predictor):
     """
-    Prefix predictor backed by a trie for efficient lookup.
+    Prefix predictor backed by a trie for O(prefix_length) lookup.
+
+    Suitable when you have a word list but no frequency data. Scores
+    all matches equally at 1.0 — combine with a history or frequency
+    predictor for score differentiation. For use cases where frequency
+    data is available, FrequencyPredictor builds its own prefix index
+    and carries per-word scores through the pipeline.
     """
 
     name = "trie_prefix"
