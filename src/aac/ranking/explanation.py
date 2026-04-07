@@ -1,4 +1,3 @@
-# aac/ranking/explanation.py
 from __future__ import annotations
 
 from collections.abc import Mapping
