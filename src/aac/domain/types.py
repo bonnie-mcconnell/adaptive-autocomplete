@@ -12,12 +12,25 @@ class CompletionContext:
 
     def prefix(self) -> str:
         """
-        Returns the current completion prefix.
+        Return the current completion prefix, normalised to lowercase.
 
-        Rules:
-        - If cursor_pos is provided, the character immediately before the
-          cursor is considered in-progress and excluded.
-        - If cursor_pos is None, the full text is treated as committed input.
+        Normalisation:
+            All prefixes are lowercased before being returned. The bundled
+            vocabulary is lowercase; case-normalising here means typing
+            "He" and "he" produce the same completions. Callers that need
+            case-sensitive behaviour should construct CompletionContext with
+            pre-normalised text.
+
+        Cursor position rules:
+            If cursor_pos is provided, the character immediately before the
+            cursor is considered in-progress and excluded from the prefix.
+            cursor_pos is clamped to [0, len(text)], so out-of-range values
+            are safe and return the longest valid prefix.
+
+            Examples:
+                text="git checkout", cursor_pos=7  ->  "ch"   (cursor mid-word)
+                text="git checkout", cursor_pos=12 ->  "checkou"  (last char in-progress)
+                text="he", cursor_pos=None         ->  "he"   (full text, no cursor)
         """
         if self.cursor_pos is not None:
             before = self.text[: self.cursor_pos]
@@ -27,11 +40,12 @@ class CompletionContext:
                 return ""
 
             token = parts[-1]
-            return token[:-1] if token else ""
+            result = token[:-1] if token else ""
+            return result.lower()
 
         # No cursor: use full text
         parts = self.text.split()
-        return parts[-1] if parts else ""
+        return parts[-1].lower() if parts else ""
 
 
 @dataclass(frozen=True)
