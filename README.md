@@ -2,7 +2,7 @@
 
 A ranking and suggestion engine built to understand how autocomplete systems actually work - not by calling a library, but by implementing the full pipeline: candidate generation, scoring, learning from user selections, and explaining every decision.
 
-The architecture separates prediction from ranking. That turns out to be the key decision - once they're separate, each layer can be swapped, tested, and reasoned about independently. The same structure applies to any system that generates candidates, scores them, orders them, and needs to explain why.
+The architecture separates prediction from ranking. Once they're separate, each layer can be swapped, tested, and reasoned about independently. The same structure applies to any system that generates candidates, scores them, orders them, and needs to explain why.
 
 ---
 
