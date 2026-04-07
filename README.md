@@ -1,22 +1,22 @@
 # adaptive-autocomplete
 
-I built this to understand how autocomplete actually works at the system level, not by calling a library, but by building the full pipeline: candidate generation, scoring, learning from selections, and explaining every decision.
+A ranking and suggestion engine built to understand how autocomplete systems actually work - not by calling a library, but by implementing the full pipeline: candidate generation, scoring, learning from user selections, and explaining every decision.
 
-The domain is autocomplete but the architecture is a general ranking pipeline. The same structure applies to search, recommendations, or any system that generates candidates, scores them, orders them, and needs to explain why.
+The architecture separates prediction from ranking. That turns out to be the key decision - once they're separate, each layer can be swapped, tested, and reasoned about independently. The same structure applies to any system that generates candidates, scores them, orders them, and needs to explain why.
 
 ---
 
 ## Quick start
 
 ```bash
-git clone https://github.com/[your-handle]/adaptive-autocomplete
+git clone https://github.com/bonnie-mcconnell/adaptive-autocomplete
 cd adaptive-autocomplete
 pip install poetry && poetry install
 
-aac suggest he          # basic completions
+aac suggest he          # completions ranked by frequency
 aac explain he          # score breakdown per suggestion
-aac record he hero      # teach the engine a selection
-aac --preset robust suggest helo   # typo recovery
+aac record he hero      # record a selection - engine learns from it
+aac --preset robust suggest helo   # typo recovery via BK-tree
 ```
 
 Requires Python 3.10+.
@@ -27,72 +27,72 @@ Requires Python 3.10+.
 
 ```
 $ aac suggest he
-hello
+her
+here
 help
-hero
-helium
+hello
+head
+heart
+hear
+health
 
 $ aac explain he
-hello  base=115.00  history=  0.00  total=115.00  [source=score]
-help   base= 86.00  history=  0.00  total= 86.00  [source=score]
-hero   base= 50.00  history=  0.00  total= 50.00  [source=score]
+her          base= 3900.00  history=    0.00  total= 3900.00  [source=score]
+here         base=  970.00  history=    0.00  total=  970.00  [source=score]
+help         base=  900.00  history=    0.00  total=  900.00  [source=score]
+hello        base=  760.00  history=    0.00  total=  760.00  [source=score]
+head         base=  720.00  history=    0.00  total=  720.00  [source=score]
 
 $ aac record he hero
 Recorded selection 'hero' for input 'he'
 
-$ aac suggest he
-hello    <- hero now ranks higher due to selection history
-help
-hero
-helium
+$ aac explain he
+her          base= 3900.00  history=    0.00  total= 3900.00  [source=score]
+here         base=  970.00  history=    0.00  total=  970.00  [source=score]
+help         base=  900.00  history=    0.00  total=  900.00  [source=score]
+hello        base=  760.00  history=    0.00  total=  760.00  [source=score]
+head         base=  720.00  history=    0.00  total=  720.00  [source=score]
+heart        base=  690.00  history=    0.00  total=  690.00  [source=score]
+hear         base=  545.00  history=    0.00  total=  545.00  [source=score]
+health       base=  435.00  history=    0.00  total=  435.00  [source=score]
+heavy        base=  435.00  history=    0.00  total=  435.00  [source=score]
+hero         base=  431.50  history=    0.00  total=  431.50  [source=score]
 ```
+
+`hero` moved from position ~10 to position 10 with a higher score. Its base score increased from 430 to 431.5 - `HistoryPredictor` contributed 1 selection × 1.5 weight. In the `default` preset, learning happens at the prediction layer rather than the ranking layer, so the boost shows up in `base` rather than `history`. The `recency` and `robust` presets use `DecayRanker` instead, which shows a non-zero `history` column and weights recent selections more heavily.
+
+History persists across restarts. Selections are stored with full ISO 8601 timestamps so decay-based presets remain accurate after reload.
 
 ---
 
-## The core design decision
+## The design decision that shaped everything else
 
-The main thing I had to figure out was whether prediction and ranking should be the same thing or different things.
+The question was whether prediction and ranking should be one operation or two.
 
-They feel like the same thing. You type a prefix; suggestions appear in order as one operation. But they're actually two separate problems:
+On the surface they look like one thing: text goes in, ordered suggestions come out. But they're solving different problems:
 
-- **Prediction** answers "what are plausible completions, and how likely is each one?" It's stateless. It doesn't know or care what you've selected before.
-- **Ranking** answers "given these scored candidates, what order should we show them in, and how should past behaviour change that?" It's stateful. It's where learning happens.
+**Prediction** asks "what words plausibly complete this prefix, and how likely is each one?" It's stateless. A frequency predictor doesn't know or care what you selected yesterday. A trie predictor doesn't know it either. Given the same input, they always return the same output.
 
-Once I separated them, a lot of other things fell into place. A predictor can be completely swapped out without touching the learning logic. The engine itself stays thin. It just coordinates, it doesn't contain scoring or ordering logic. And I can test each layer independently.
+**Ranking** asks "given these candidates and their scores, what order should the user see, and how should past behaviour change that?" It's stateful. It's where learning lives.
 
-The tradeoff is that this is more code than just writing one function that does everything. I think it's worth it. The alternative is a system in which everything is entangled, and you can't change one thing without breaking another.
+Separating them means each layer has a single job. A predictor can be replaced without touching the learning logic. The engine stays thin - it orchestrates, it doesn't contain scoring or ordering logic. And the layers can be tested completely independently, which matters when debugging why a particular word appeared where it did.
+
+The tradeoff is more code than a single entangled function. It's worth it.
 
 ---
 
 ## Presets
 
-Four operating modes because different contexts need different behaviour:
+Four operating modes:
 
-| Preset | Learns | Handles typos | Use when |
-|--------|--------|----------------|----------|
-| `stateless` | No | No | High-throughput, results must be reproducible |
+| Preset | Learns | Typo recovery | Use when |
+|--------|--------|---------------|----------|
+| `stateless` | No | No | Reproducible, high-throughput results |
 | `default` | Yes | No | General purpose |
-| `recency` | Yes (with decay) | No | Recent selections should count more |
-| `robust` | Yes | Yes | Real input with typos |
+| `recency` | Yes (exponential decay) | No | Recent selections should outweigh old ones |
+| `robust` | Yes | Yes | Real user input that may contain typos |
 
-`robust` runs edit-distance matching per candidate, which is why it's ~5x slower than the others (~145µs vs ~30µs). I made it opt-in rather than default so you don't pay that cost unless you need it.
-
----
-
-## Performance
-
-60,000 autocomplete calls per preset:
-
-| Preset | Avg latency |
-|--------|-------------|
-| stateless | ~38µs |
-| default | ~30µs |
-| recency | ~34µs |
-| robust | ~145µs |
-
-One thing I didn't expect: `default` is slightly faster than `stateless`. The history lookup in `default` happens to hit a warm code path that the stateless variant doesn't go through. I verified this across multiple runs: it's consistent, not noise.
-
-These numbers were measured against a 6-word vocabulary. Latency scales with vocabulary size - robust in particular, since edit-distance runs against every word on every call.
+`robust` runs approximate string matching via a BK-tree on every query. It recovers from mid-word typos ("helo" → "hello", "hlep" → "help") and is the only preset that catches first-character errors ("wello" → "hello"). The cost is ~1500µs vs ~65µs for the others - opt-in, not default.
 
 ---
 
@@ -101,9 +101,9 @@ These numbers were measured against a 6-word vocabulary. Latency scales with voc
 ```
 User input
     ↓
-CompletionContext
+CompletionContext  (lowercases prefix, handles cursor position)
     ↓
-Predictors  →  scored candidates (stateless, parallel-safe)
+Predictors  →  scored candidates (stateless, composable)
     ↓
 Weighted aggregation
     ↓
@@ -112,31 +112,56 @@ Rankers  →  ordered results + learning updates
 Suggestions + explanations
 ```
 
-A few invariants I enforced throughout:
+**Enforced invariants:**
 
-**If a score exists, it can be explained.** Every suggestion carries a full breakdown: base score, history adjustment, final score, which ranker touched it. I added this early because I needed to see what the pipeline was doing while building it. It ended up being the most useful debugging tool in the project.
+**Rankers cannot add or remove candidates.** They can only reorder and rescore. Checked at runtime with a `RuntimeError` naming the offending ranker - not an `assert`, which Python disables under `-O`.
 
-**Rankers can't add or remove candidates.** They can only reorder and rescore. This makes the pipeline composable: you can stack rankers without worrying about one of them silently dropping results.
+**Explanations must reconcile with scores.** `RankingExplanation` enforces `final_score == base_score + history_boost` in `__post_init__`. If any code produces an inconsistent explanation, it fails at construction, not silently downstream.
 
-**History is owned by the engine, not the rankers.** Rankers can read history but can't modify it directly. This means the learning state is always in one place and the audit trail is clean.
+**History has one owner.** The engine holds the single `History` instance. Rankers can read it; only the engine writes to it. This makes the audit trail clean and prevents predictors from recording selections twice.
+
+---
+
+## Performance
+
+60,000 `suggest()` calls per preset, 482-word vocabulary:
+
+| Preset | Avg latency |
+|--------|-------------|
+| stateless | ~65µs |
+| default | ~66µs |
+| recency | ~68µs |
+| robust | ~1500µs |
+
+`robust` uses a BK-tree (Burkhard-Keller, 1973) for approximate string matching. The BK-tree exploits the triangle inequality property of Levenshtein distance: if a node is distance `d` from the query, only children at keys within `[d-t, d+t]` can contain matches. This prunes large portions of the tree without evaluating them.
+
+In practice at `max_distance=2` with short prefixes, the search ball covers ~75% of the metric space and pruning is weak. BK-tree performance is strongest when the threshold is small relative to string length. For vocabularies over ~100k words, a trigram index is the right approach - precompute trigram sets per word, use set intersection to find candidates, then run exact edit distance on the shortlist.
 
 ---
 
 ## What I'd change
 
-**The history model is too naive.** Right now it counts raw selections, so something selected 80 times six months ago has the same weight as something selected twice yesterday. The `recency` preset fixes this with exponential decay, but the better solution is to build time-aware history into the core model from the start rather than patching it in a preset.
+**The default preset ignores time.** Raw selection counts don't decay. Something selected 50 times six months ago outweighs something selected twice yesterday. The `recency` preset fixes this with exponential decay, but the better design would be building time-awareness into the core history model rather than routing around it with a preset. Timestamps are persisted correctly - the naivety is in the `default` ranker, which discards them.
 
-**The preset system is a leaky abstraction.**  Presets now accept a custom vocabulary, but the deeper problem remains: the line between "what's a preset" and "what's a configuration option" is fuzzy. If I were starting over, I'd remove presets entirely and let callers pass in their own predictor and ranker stack directly. That would make it more flexible and easier to test combinations.
+**Presets are a leaky abstraction.** They configure internal wiring - which predictors, which rankers, which weights - but the line between "what's a preset" and "what's a configuration parameter" was never cleanly resolved. Starting over, I'd remove presets entirely and let callers pass their own predictor and ranker stacks directly.
 
-**No persistence.** History resets when the process exits. For a real use case you'd need to serialise history to disk or a database. It's on the TODO list but not implemented.
+**Edit distance at scale needs a trigram index.** The BK-tree is correct and theoretically O(log n), but degrades at high thresholds relative to query length. The implementation covers this vocabulary; it would not cover a 100k-word corpus without a structural change.
 
 ---
 
 ## Tests and CI
 
-Core logic (engine, predictors, rankers, history, explanations) is unit tested. The CLI is intentionally thin and lightly tested as the interesting behaviour lives in the layers below it.
+The test suite covers correctness properties rather than just happy paths:
 
-CI runs on every push via GitHub Actions.
+- **BK-tree**: every query result matches brute-force linear scan exactly, across multiple queries and thresholds
+- **Explain invariant**: `final_score == base_score + history_boost` for every suggestion in every preset
+- **Ranker invariant**: `RuntimeError` is raised if a ranker adds or removes suggestions
+- **Decay double-counting regression**: `explain()` passes pre-ranking scores to each ranker so boosts aren't counted twice
+- **Persistence round-trip**: timestamps survive serialisation and deserialisation
+- **Schema migration**: v1 count-only history files load correctly under v2
+- **Predictor contract**: all five predictor implementations are verified against a shared invariant suite
+
+CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
