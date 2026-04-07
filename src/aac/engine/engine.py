@@ -74,16 +74,18 @@ class AutocompleteEngine:
         else:
             self._rankers = list(ranker)
 
-        # Resolve history source of truth
+        # Resolve history source of truth.
+        # If an explicit history is provided, use it.
+        # Otherwise adopt the first ranker that owns a history instance.
+        # If no ranker owns history, create a fresh one.
         if history is not None:
             self._history = history
-        elif any(isinstance(r, LearnsFromHistory) for r in self._rankers):
-            for r in self._rankers:
-                if isinstance(r, LearnsFromHistory):
-                    self._history = r.history
-                    break
         else:
-            self._history = History()
+            owned = next(
+                (r.history for r in self._rankers if isinstance(r, LearnsFromHistory)),
+                None,
+            )
+            self._history = owned if owned is not None else History()
 
     # ------------------------------------------------------------------
     # Core pipeline
@@ -139,6 +141,10 @@ class AutocompleteEngine:
 
         Rankers may reorder or rescore suggestions,
         but must not add or remove entries.
+
+        Raises:
+            RuntimeError: If a ranker adds or removes suggestions.
+            ValueError: If a ranker produces a non-finite score.
         """
         ranked = scored
         original_values = {s.suggestion.value for s in ranked}
@@ -146,10 +152,15 @@ class AutocompleteEngine:
         for ranker in self._rankers:
             ranked = ranker.rank(ctx.text, ranked)
 
-            assert {s.suggestion.value for s in ranked} == original_values, (
-                f"Ranker {ranker.__class__.__name__} modified suggestion set"
-            )
-            
+            after_values = {s.suggestion.value for s in ranked}
+            if after_values != original_values:
+                added = after_values - original_values
+                removed = original_values - after_values
+                raise RuntimeError(
+                    f"Ranker {ranker.__class__.__name__} modified the suggestion set. "
+                    f"Added: {added or 'none'}. Removed: {removed or 'none'}."
+                )
+
         for s in ranked:
             if not math.isfinite(s.score):
                 raise ValueError(
@@ -202,7 +213,6 @@ class AutocompleteEngine:
         """
         return self._score(ctx)
 
-
     # ------------------------------------------------------------------
     # Explanation
     # ------------------------------------------------------------------
@@ -211,19 +221,33 @@ class AutocompleteEngine:
         """
         Return per-suggestion ranking explanations.
 
-        Notes:
-            - Explanations are ranker-driven.
-            - Predictor explanations are treated as upstream signal
-              and may be incorporated by rankers if desired.
+        Each ranker's explain() receives the pre-ranking scores so that
+        explanations reflect each ranker's individual contribution rather
+        than the cumulative post-ranking state. Without this, rankers that
+        apply score boosts (e.g. DecayRanker) would double-count their
+        contribution when their explain() saw already-boosted scores.
+
+        The final explanation for each suggestion is the merge of all
+        ranker contributions, ordered by the final ranked position.
         """
         ctx = CompletionContext(text)
-        scored = self._score(ctx)
-        ranked = self._apply_ranking(ctx, scored)
+
+        # Capture pre-ranking scores — these are the base signals each
+        # ranker's explain() should reason about independently.
+        pre_ranking = self._score(ctx)
+        ranked = self._apply_ranking(ctx, pre_ranking)
+
+        # Build a lookup from value -> pre-ranking ScoredSuggestion so
+        # each ranker explains its contribution from a clean baseline.
+        pre_ranking_by_value = {s.suggestion.value: s for s in pre_ranking}
+        pre_ranking_ordered = [
+            pre_ranking_by_value[s.suggestion.value] for s in ranked
+        ]
 
         aggregated: dict[str, RankingExplanation] = {}
 
         for ranker in self._rankers:
-            for exp in ranker.explain(ctx.text, ranked):
+            for exp in ranker.explain(ctx.text, pre_ranking_ordered):
                 if exp.value not in aggregated:
                     aggregated[exp.value] = exp
                 else:
@@ -257,9 +281,14 @@ class AutocompleteEngine:
         """
         Record a user selection for learning.
 
-        Predictors may optionally implement a `record(...)` hook.
-        This is intentionally duck-typed to avoid forcing
-        learning behavior on all predictors.
+        Writes to the engine history directly, then calls `record(ctx, value)`
+        on any predictor that implements that method. This hook exists for
+        predictors that maintain private state beyond the shared History
+        (e.g. a predictor with its own internal model).
+
+        Note: HistoryPredictor reads from the shared History and does not
+        implement a `record` hook — the engine's direct write is sufficient.
+        Adding a hook to HistoryPredictor would record each selection twice.
         """
         ctx = CompletionContext(text)
         self._history.record(ctx.text, value)
@@ -291,7 +320,6 @@ class AutocompleteEngine:
             "suggestions": [s.suggestion.value for s in ranked],
         }
 
-
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------
@@ -317,7 +345,7 @@ class AutocompleteEngine:
                 r.__class__.__name__
                 for r in self._rankers
             ],
-            "history_enabled": self._history is not None,
+            "history_entries": len(list(self._history.entries())),
         }
 
     # ------------------------------------------------------------------
