@@ -198,7 +198,7 @@ class History:
 
     def snapshot(self) -> dict[str, dict[str, int]]:
         """
-        Return a JSON-serializable snapshot of history data.
+        Return a count-only snapshot of history data.
 
         Format:
             {
@@ -207,11 +207,11 @@ class History:
                 }
             }
 
-        Design notes:
-            - Snapshot intentionally omits timestamps
-            - Keys and values are JSON primitives only
-            - Stable, compact, and storage-friendly
-            - Suitable for persistence, debugging, and inspection
+        Notes:
+            - Timestamps are omitted. This format is the v1 storage
+              schema and is kept for inspection and backwards compatibility.
+              For full persistence including timestamps, use JsonHistoryStore
+              which writes the v2 format.
         """
         snapshot: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -222,12 +222,3 @@ class History:
             prefix: dict(values)
             for prefix, values in snapshot.items()
         }
-
-    def replace(self, other: History) -> None:
-        """
-        Replace contents with another History instance.
-        Intended for persistence hydration.
-        """
-        self._entries.clear()
-        self._entries.extend(other._entries)
-
