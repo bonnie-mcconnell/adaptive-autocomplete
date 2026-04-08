@@ -39,7 +39,7 @@ def test_engine_describe_shape() -> None:
 
     assert "predictors" in info
     assert "rankers" in info
-    assert "history_enabled" in info
+    assert "history_entries" in info
 
     assert isinstance(info["predictors"], list)
     assert isinstance(info["rankers"], list)
