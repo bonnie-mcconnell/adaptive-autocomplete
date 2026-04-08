@@ -105,11 +105,13 @@ def test_engine_and_learning_ranker_share_history() -> None:
 def test_history_learning_boosts_selected_value() -> None:
     """End-to-end: recording via history directly must improve suggestion rank."""
     from aac.presets import get_preset
+
     history = History()
-    engine = get_preset("default").build(history)
+    # Pass None as second arg (vocabulary). Pylance requires both positional args
+    engine = get_preset("default").build(history, None)
 
     before_values = [s.value for s in engine.suggest("he")]
-    history.record(prefix="he", value="hero")
+    history.record("he", "hero")
     after_values = [s.value for s in engine.suggest("he")]
 
     assert "hero" in after_values

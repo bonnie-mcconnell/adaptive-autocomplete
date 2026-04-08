@@ -7,13 +7,14 @@ from aac.presets import get_preset
 def test_stateless_does_not_learn() -> None:
     """Stateless preset must produce identical output regardless of recorded history."""
     history = History()
-    engine = get_preset("stateless").build(history)
+    # Pass None as second arg (vocabulary), PresetBuilder requires both positional args
+    engine = get_preset("stateless").build(history, None)
 
     before = [s.value for s in engine.suggest("he")]
 
-    # Record many selections - a learning engine would change its output.
+    # Record many selections, a learning engine would change its output.
     for _ in range(10):
-        history.record(prefix="he", value="hero")
+        history.record("he", "hero")
 
     after = [s.value for s in engine.suggest("he")]
 
