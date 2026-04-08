@@ -21,7 +21,7 @@ from aac.domain.types import (
     ScoredSuggestion,
     Suggestion,
 )
-from aac.engine.engine import AutocompleteEngine
+from aac.engine.engine import AutocompleteEngine, DescribeState
 from aac.predictors.static_prefix import StaticPrefixPredictor
 from aac.ranking.base import Ranker
 from aac.ranking.explanation import RankingExplanation
@@ -138,7 +138,7 @@ def test_describe_returns_predictor_names() -> None:
     engine = AutocompleteEngine(
         predictors=[StaticPrefixPredictor(["hello"])]
     )
-    info = engine.describe()
+    info: DescribeState = engine.describe()
     assert info["predictors"][0]["name"] == "static_prefix"
 
 
@@ -146,7 +146,7 @@ def test_describe_returns_ranker_names() -> None:
     engine = AutocompleteEngine(
         predictors=[StaticPrefixPredictor(["hello"])]
     )
-    info = engine.describe()
+    info: DescribeState = engine.describe()
     assert "ScoreRanker" in info["rankers"]
 
 
@@ -154,9 +154,11 @@ def test_describe_history_entries_increments_after_record() -> None:
     engine = AutocompleteEngine(
         predictors=[StaticPrefixPredictor(["hello", "help"])]
     )
-    before = engine.describe()["history_entries"]
+    info_before: DescribeState = engine.describe()
+    before: int = info_before["history_entries"]
     engine.record_selection("he", "hello")
-    after = engine.describe()["history_entries"]
+    info_after: DescribeState = engine.describe()
+    after: int = info_after["history_entries"]
     assert after == before + 1
 
 

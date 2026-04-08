@@ -167,3 +167,11 @@ def test_modifying_returned_entries_does_not_affect_history() -> None:
     entries = list(h.entries())
     entries.clear()
     assert len(list(h.entries())) == 1
+
+
+def test_counts_for_prefix_since_skips_non_matching_prefix() -> None:
+    """Entries for other prefixes must be ignored even if timestamp qualifies."""
+    h = History()
+    h.record("wo", "world", timestamp=_NOW + _HOUR)
+    counts = h.counts_for_prefix_since("he", since=_NOW)
+    assert counts == {}

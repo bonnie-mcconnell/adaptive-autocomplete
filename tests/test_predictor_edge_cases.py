@@ -1,48 +1,58 @@
 """
-Tests for predictor edge cases - empty prefix, validation errors,
-and constructor guards that are exercised on unusual inputs.
+Edge-case and validation tests for all predictors and supporting types.
+
+Covers: empty prefix contracts, constructor guards, the public levenshtein
+API, WeightedPredictor.name, DecayFunction boundary conditions, engine
+adapters, and preset output.
 """
 from __future__ import annotations
+
+import json
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 from aac.domain.history import History
-from aac.domain.types import CompletionContext
+from aac.domain.types import CompletionContext, WeightedPredictor
+from aac.engine.engine import AutocompleteEngine
 from aac.predictors.edit_distance import EditDistancePredictor, levenshtein
 from aac.predictors.frequency import FrequencyPredictor
 from aac.predictors.history import HistoryPredictor
 from aac.predictors.static_prefix import StaticPrefixPredictor
 from aac.predictors.trie import TriePrefixPredictor
+from aac.ranking.decay import DecayFunction, DecayRanker
+from aac.ranking.learning import LearningRanker
+from aac.storage.json_store import JsonHistoryStore
 
 # ------------------------------------------------------------------
 # Empty prefix - all predictors must return [] not raise
 # ------------------------------------------------------------------
 
 def test_frequency_predictor_empty_prefix() -> None:
-    p = FrequencyPredictor({"hello": 100})
-    assert p.predict(CompletionContext("")) == []
+    assert FrequencyPredictor({"hello": 100}).predict(CompletionContext("")) == []
 
 
 def test_history_predictor_empty_prefix() -> None:
     h = History()
     h.record("he", "hello")
-    p = HistoryPredictor(h)
-    assert p.predict(CompletionContext("")) == []
+    assert HistoryPredictor(h).predict(CompletionContext("")) == []
 
 
 def test_static_prefix_predictor_empty_prefix() -> None:
-    p = StaticPrefixPredictor(["hello", "help"])
-    assert p.predict(CompletionContext("")) == []
+    assert StaticPrefixPredictor(["hello", "help"]).predict(CompletionContext("")) == []
 
 
 def test_trie_predictor_empty_prefix() -> None:
-    p = TriePrefixPredictor(["hello", "help"])
-    assert p.predict(CompletionContext("")) == []
+    assert TriePrefixPredictor(["hello", "help"]).predict(CompletionContext("")) == []
 
 
 def test_edit_distance_predictor_empty_prefix() -> None:
-    p = EditDistancePredictor(["hello", "help"], max_distance=1)
-    assert p.predict(CompletionContext("")) == []
+    assert EditDistancePredictor(["hello", "help"], max_distance=1).predict(
+        CompletionContext("")
+    ) == []
 
 
 # ------------------------------------------------------------------
@@ -60,84 +70,99 @@ def test_frequency_predictor_rejects_zero_max_frequency() -> None:
 
 
 def test_learning_ranker_rejects_negative_boost() -> None:
-    from aac.ranking.learning import LearningRanker
-    h = History()
     with pytest.raises(ValueError, match="boost"):
-        LearningRanker(h, boost=-1.0)
+        LearningRanker(History(), boost=-1.0)
 
 
 def test_learning_ranker_rejects_negative_dominance_ratio() -> None:
-    from aac.ranking.learning import LearningRanker
-    h = History()
     with pytest.raises(ValueError, match="dominance_ratio"):
-        LearningRanker(h, dominance_ratio=-0.1)
+        LearningRanker(History(), dominance_ratio=-0.1)
 
 
 # ------------------------------------------------------------------
-# levenshtein_distance public API
+# Public levenshtein function
 # ------------------------------------------------------------------
 
-def test_levenshtein_distance_public_function() -> None:
+def test_levenshtein_exact_match() -> None:
     assert levenshtein("hello", "hello") == 0
+
+
+def test_levenshtein_one_edit() -> None:
     assert levenshtein("hello", "helo") == 1
+
+
+def test_levenshtein_empty_string() -> None:
     assert levenshtein("", "abc") == 3
 
 
 # ------------------------------------------------------------------
-# WeightedPredictor.name property
+# WeightedPredictor.name delegates to inner predictor
 # ------------------------------------------------------------------
 
-def test_weighted_predictor_name_delegates_to_predictor() -> None:
-    from aac.domain.types import WeightedPredictor
+def test_weighted_predictor_name_delegates() -> None:
     p = FrequencyPredictor({"hello": 100})
     wp = WeightedPredictor(predictor=p, weight=1.0)
     assert wp.name == "frequency"
 
 
 # ------------------------------------------------------------------
-# DecayFunction: future timestamp and naive timestamp validation
+# DecayFunction boundary conditions
 # ------------------------------------------------------------------
 
-def test_decay_function_future_timestamp_returns_one() -> None:
-    from datetime import datetime, timedelta, timezone
-
-    from aac.ranking.decay import DecayFunction
+def test_decay_function_future_event_returns_one() -> None:
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
     future = now + timedelta(hours=1)
-    decay = DecayFunction(half_life_seconds=3600)
-    assert decay.weight(now=now, event_time=future) == 1.0
+    assert DecayFunction(half_life_seconds=3600).weight(now=now, event_time=future) == 1.0
 
 
-def test_decay_function_rejects_naive_timestamp() -> None:
-    from datetime import datetime, timezone
-
-    from aac.ranking.decay import DecayFunction
+def test_decay_function_rejects_naive_event_time() -> None:
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    naive = datetime(2024, 1, 1)  # no tzinfo
-    decay = DecayFunction(half_life_seconds=3600)
+    naive = datetime(2024, 1, 1)
     with pytest.raises(ValueError):
-        decay.weight(now=now, event_time=naive)
+        DecayFunction(half_life_seconds=3600).weight(now=now, event_time=naive)
+
+
+def test_decay_ranker_skips_entries_for_other_prefixes() -> None:
+    """_decayed_counts must not leak boosts across prefixes."""
+    h = History()
+    h.record("wo", "world")  # different prefix
+    ranker = DecayRanker(
+        history=h,
+        decay=DecayFunction(half_life_seconds=3600),
+        now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    suggestions = [
+        pytest.importorskip("aac.domain.types").ScoredSuggestion(
+            suggestion=pytest.importorskip("aac.domain.types").Suggestion("world"),
+            score=1.0,
+        )
+    ]
+    # "world" was recorded under "wo" not "he" - no boost expected
+    result = ranker.rank("he", suggestions)
+    assert result[0].score == 1.0
+
+
+def test_decay_ranker_empty_suggestions_returns_empty() -> None:
+    h = History()
+    ranker = DecayRanker(
+        history=h,
+        decay=DecayFunction(half_life_seconds=3600),
+        now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    assert ranker.rank("he", []) == []
 
 
 # ------------------------------------------------------------------
-# engine: explain_as_dicts adapter, history property, record hook
+# Engine adapters
 # ------------------------------------------------------------------
 
-def test_engine_explain_as_dicts_shape() -> None:
-    from aac.engine.engine import AutocompleteEngine
+def test_engine_explain_as_dicts_schema() -> None:
     engine = AutocompleteEngine(predictors=[StaticPrefixPredictor(["hello", "help"])])
-    result = engine.explain_as_dicts("he")
-    assert isinstance(result, list)
-    for row in result:
-        assert "value" in row
-        assert "base_score" in row
-        assert "history_boost" in row
-        assert "final_score" in row
+    for row in engine.explain_as_dicts("he"):
+        assert {"value", "base_score", "history_boost", "final_score"} <= row.keys()
 
 
-def test_engine_history_property() -> None:
-    from aac.domain.history import History
-    from aac.engine.engine import AutocompleteEngine
+def test_engine_history_property_is_the_injected_instance() -> None:
     h = History()
     engine = AutocompleteEngine(
         predictors=[StaticPrefixPredictor(["hello"])],
@@ -147,11 +172,10 @@ def test_engine_history_property() -> None:
 
 
 def test_engine_record_calls_predictor_hook_if_present() -> None:
-    """A predictor with a record() hook should have it called on selection."""
+    """A predictor with a record() hook must have it called on selection."""
     from aac.domain.types import ScoredSuggestion, Suggestion
-    from aac.engine.engine import AutocompleteEngine
 
-    recorded = []
+    recorded: list[tuple[str, str]] = []
 
     class HookPredictor:
         name = "hook"
@@ -168,6 +192,17 @@ def test_engine_record_calls_predictor_hook_if_present() -> None:
 
 
 # ------------------------------------------------------------------
+# Trie: limit enforcement inside _collect
+# ------------------------------------------------------------------
+
+def test_trie_respects_max_results_limit() -> None:
+    p = TriePrefixPredictor(
+        ["help", "hello", "helium", "herald", "heron", "hex"], max_results=2
+    )
+    assert len(p.predict(CompletionContext("he"))) == 2
+
+
+# ------------------------------------------------------------------
 # presets.describe_presets
 # ------------------------------------------------------------------
 
@@ -179,65 +214,54 @@ def test_describe_presets_contains_all_preset_names() -> None:
 
 
 # ------------------------------------------------------------------
-# Trie: limit enforcement inside _collect
+# JsonHistoryStore defensive branches
 # ------------------------------------------------------------------
 
-def test_trie_respects_max_results_limit() -> None:
-    """_collect must stop at max_results even when more matches exist."""
-    p = TriePrefixPredictor(["help", "hello", "helium", "herald", "heron"], max_results=2)
-    results = p.predict(CompletionContext("he"))
-    assert len(results) <= 2
-
-
-# ------------------------------------------------------------------
-# DecayRanker: empty suggestions list
-# ------------------------------------------------------------------
-
-def test_decay_ranker_empty_suggestions_returns_empty() -> None:
-    from datetime import datetime, timezone
-
-    from aac.ranking.decay import DecayFunction, DecayRanker
-    h = History()
-    ranker = DecayRanker(
-        history=h,
-        decay=DecayFunction(half_life_seconds=3600),
-        now=datetime(2024, 1, 1, tzinfo=timezone.utc),
-    )
-    assert ranker.rank("he", []) == []
-
-
-# ------------------------------------------------------------------
-# LearningRanker: empty suggestions list
-# ------------------------------------------------------------------
-
-def test_learning_ranker_empty_suggestions_returns_empty() -> None:
-    from aac.ranking.learning import LearningRanker
-    h = History()
-    ranker = LearningRanker(h)
-    assert ranker.rank("he", []) == []
-
-
-# ------------------------------------------------------------------
-# JsonHistoryStore: non-list entries key in v2
-# ------------------------------------------------------------------
-
-def test_json_store_non_list_entries_returns_empty() -> None:
-    import json
-    import os
-    import tempfile
-    from pathlib import Path
-
-    from aac.storage.json_store import JsonHistoryStore
-
+def _tmp() -> Path:
     fd, name = tempfile.mkstemp(suffix=".json")
     os.close(fd)
-    path = Path(name)
+    return Path(name)
+
+
+def test_json_store_non_list_entries_returns_empty() -> None:
+    path = _tmp()
     try:
         path.write_text(
-            json.dumps({"version": 2, "entries": "not-a-list"}),
-            encoding="utf-8",
+            json.dumps({"version": 2, "entries": "not-a-list"}), encoding="utf-8"
         )
-        loaded = JsonHistoryStore(path).load()
-        assert list(loaded.entries()) == []
+        assert list(JsonHistoryStore(path).load().entries()) == []
+    finally:
+        path.unlink()
+
+
+def test_v2_non_string_timestamp_skipped() -> None:
+    path = _tmp()
+    try:
+        payload = {
+            "version": 2,
+            "entries": [
+                {"prefix": "he", "value": "hello", "timestamp": 12345},
+                {"prefix": "he", "value": "help", "timestamp": "2024-01-01T12:00:00+00:00"},
+            ],
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        counts = JsonHistoryStore(path).load().counts_for_prefix("he")
+        assert "help" in counts
+        assert "hello" not in counts
+    finally:
+        path.unlink()
+
+
+def test_v2_naive_timestamp_gets_utc() -> None:
+    path = _tmp()
+    try:
+        payload = {
+            "version": 2,
+            "entries": [{"prefix": "he", "value": "hello", "timestamp": "2024-01-01T12:00:00"}],
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        entries = list(JsonHistoryStore(path).load().entries())
+        assert len(entries) == 1
+        assert entries[0].timestamp.tzinfo is not None
     finally:
         path.unlink()

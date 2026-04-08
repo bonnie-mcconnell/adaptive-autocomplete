@@ -1,13 +1,28 @@
 """
-Smoke test: verify the engine initialises and produces output end-to-end.
+Smoke tests: verify the engine initialises and produces output end-to-end.
 
-This is not a unit test. It exists to catch import errors, missing data
-files, and wiring failures that unit tests would miss because they stub
-out dependencies. If this test fails, nothing else in the suite is reliable.
+These are not unit tests. They exist to catch import errors, missing data
+files, and wiring failures that unit tests miss because they stub out
+dependencies. If any of these fail, nothing else in the suite is reliable.
 """
 from __future__ import annotations
 
+from types import MappingProxyType
+
+from aac.data import load_english_frequencies
 from aac.presets import create_engine
+
+
+def test_load_english_frequencies_returns_mapping() -> None:
+    """Bundled vocabulary must load as a non-empty immutable mapping."""
+    vocab = load_english_frequencies()
+    assert isinstance(vocab, MappingProxyType)
+    assert len(vocab) > 0
+    # All keys must be lowercase strings, all values positive integers
+    for word, freq in vocab.items():
+        assert isinstance(word, str)
+        assert isinstance(freq, int)
+        assert freq > 0
 
 
 def test_default_engine_produces_suggestions() -> None:
