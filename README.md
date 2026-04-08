@@ -65,11 +65,11 @@ But they're solving different problems.
 
 **Prediction** asks: "what words plausibly complete this prefix, and how likely is each one?" It's stateless. A frequency predictor doesn't know what you selected yesterday. A trie predictor doesn't know either. Given the same input, they always return the same output.
 
-**Ranking** asks: "given these candidates and their scores, what order should the user see, and how should past behaviour change that?" It's stateful. It's where learning lives.
+**Ranking** asks: "given these candidates and their scores, what order should the user see, and how should past behaviour change that?" It's stateful and is where learning lives.
 
 Separating them means each layer has a single job. A predictor can be replaced without touching the learning logic. The engine stays thin - it orchestrates, it doesn't contain scoring or ordering logic. And the layers can be tested independently, which matters when debugging why a particular word appeared where it did.
 
-The tradeoff is more code than a single entangled function. It's worth it.
+The tradeoff is more code than a single entangled function, which is worth it.
 
 ---
 
@@ -110,7 +110,7 @@ Suggestions + explanations
 
 **Explanations must reconcile with scores.** `RankingExplanation` enforces `final_score == base_score + history_boost` in `__post_init__`. If any code produces an inconsistent explanation, it fails at construction, not silently downstream.
 
-**History has one owner.** The engine holds the single `History` instance. Rankers can read it; only the engine writes to it. This makes the audit trail clean and prevents predictors from recording selections twice.
+**History has one owner.** The engine holds the single `History` instance. Rankers can read it, only the engine writes to it. This makes the audit trail clean and prevents predictors from recording selections twice.
 
 ---
 
@@ -135,7 +135,7 @@ At `max_distance=2` with short prefixes over this vocabulary, the search visits 
 
 **The default preset ignores time.** Raw selection counts don't decay. Something selected 50 times six months ago outweighs something selected twice yesterday. The `recency` preset fixes this with exponential decay, but the better design would be building time-awareness into the core history model rather than routing around it with a preset. Timestamps are persisted correctly - the naivety is in the `default` ranker, which discards them.
 
-**Presets are a leaky abstraction.** They configure internal wiring - which predictors, which rankers, which weights - but the line between "what's a preset" and "what's a configuration parameter" was never cleanly resolved. Starting over, I'd remove presets entirely and let callers pass their own predictor and ranker stacks directly.
+**Presets are a leaky abstraction.** They configure internal wiring - which predictors, which rankers, which weights, but the line between "what's a preset" and "what's a configuration parameter" was never cleanly resolved. Starting over, I'd remove presets entirely and let callers pass their own predictor and ranker stacks directly.
 
 **Edit distance at scale needs a trigram index.** The BK-tree is correct and theoretically O(log n), but degrades at high thresholds relative to query length. The implementation covers this vocabulary; it would not cover a 100k-word corpus without a structural change.
 
@@ -157,8 +157,8 @@ CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
-## Why I built this
+## Build Process
 
-I originally wrote prediction and ranking as one function that took a prefix and returned ordered strings. It worked - until I tried to write a test for the learning behaviour and couldn't, because there was no seam to inject a controlled history. The separation into distinct layers came from that constraint, not from reading about design patterns first.
+I originally wrote prediction and ranking as one function that took a prefix and returned ordered strings. It worked, until I tried to write a test for the learning behaviour and couldn't, because there was no seam to inject a controlled history. The separation into distinct layers came from that constraint, not from reading about design patterns first.
 
-The other thing that surprised me was how long the `explain()` bug stayed hidden. The invariant `final_score == base_score + history_boost` was satisfied - the numbers added up - but the engine was passing post-ranking scores into each ranker's `explain()` instead of the pre-ranking baseline. So `DecayRanker` was explaining a boost it had already applied, and the invariant check couldn't catch it because it only verified arithmetic, not whether the numbers meant what they were supposed to mean. That's a different kind of correctness.
+The other thing that surprised me was how long the `explain()` bug stayed hidden. The invariant `final_score == base_score + history_boost` was satisfied - the numbers added up - but the engine was passing post-ranking scores into each ranker's `explain()` instead of the pre-ranking baseline. So `DecayRanker` was explaining a boost it had already applied, and the invariant check couldn't catch it because it only verified arithmetic, not whether the numbers meant what they were supposed to mean. 
