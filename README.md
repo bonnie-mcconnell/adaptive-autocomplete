@@ -1,8 +1,8 @@
 # adaptive-autocomplete
 
-A ranking and suggestion engine built to understand how autocomplete systems actually work - not by calling a library, but by implementing the full pipeline: candidate generation, scoring, learning from user selections, and explaining every decision.
+A ranking and suggestion engine that implements the full autocomplete pipeline from scratch: candidate generation, scoring, learning from user selections, and explaining every decision.
 
-The architecture separates prediction from ranking. That turns out to be the key decision - once they're separate, each layer can be swapped, tested, and reasoned about independently. The same structure applies to any system that generates candidates, scores them, orders them, and needs to explain why.
+The core design separates prediction from ranking. Once they're separate, each layer can be swapped, tested, and reasoned about on its own. The same structure applies to any system that generates candidates, scores them, orders them, and needs to explain why.
 
 ---
 
@@ -13,10 +13,10 @@ git clone https://github.com/bonnie-mcconnell/adaptive-autocomplete
 cd adaptive-autocomplete
 pip install poetry && poetry install
 
-aac suggest he          # completions ranked by frequency
-aac explain he          # score breakdown per suggestion
-aac record he hero      # record a selection - engine learns from it
-aac --preset robust suggest helo   # typo recovery via BK-tree
+aac suggest he                      # completions ranked by frequency
+aac explain he                      # score breakdown per suggestion
+aac record he hero                  # record a selection - engine learns
+aac --preset robust suggest helo    # typo recovery via BK-tree
 ```
 
 Requires Python 3.10+.
@@ -28,40 +28,31 @@ Requires Python 3.10+.
 ```
 $ aac suggest he
 her
-here
-help
 hello
-head
+heap
+help
+here
 heart
-hear
-health
-
-$ aac explain he
-her          base= 3900.00  history=    0.00  total= 3900.00  [source=score]
-here         base=  970.00  history=    0.00  total=  970.00  [source=score]
-help         base=  900.00  history=    0.00  total=  900.00  [source=score]
-hello        base=  760.00  history=    0.00  total=  760.00  [source=score]
-head         base=  720.00  history=    0.00  total=  720.00  [source=score]
 
 $ aac record he hero
 Recorded selection 'hero' for input 'he'
 
 $ aac explain he
-her          base= 3900.00  history=    0.00  total= 3900.00  [source=score]
-here         base=  970.00  history=    0.00  total=  970.00  [source=score]
-help         base=  900.00  history=    0.00  total=  900.00  [source=score]
-hello        base=  760.00  history=    0.00  total=  760.00  [source=score]
-head         base=  720.00  history=    0.00  total=  720.00  [source=score]
-heart        base=  690.00  history=    0.00  total=  690.00  [source=score]
-hear         base=  545.00  history=    0.00  total=  545.00  [source=score]
-health       base=  435.00  history=    0.00  total=  435.00  [source=score]
-heavy        base=  435.00  history=    0.00  total=  435.00  [source=score]
-hero         base=  431.50  history=    0.00  total=  431.50  [source=score]
+her          base= 6900.00  history=  +0.00  total= 6900.00  [source=score]
+hello        base=  760.00  history=  +0.00  total=  760.00  [source=score]
+hero         base=  200.00  history=  +1.50  total=  201.50  [source=score]
+...
 ```
 
-`hero` moved from position ~10 to position 10 with a higher score. Its base score increased from 430 to 431.5 - `HistoryPredictor` contributed 1 selection × 1.5 weight. In the `default` preset, learning happens at the prediction layer rather than the ranking layer, so the boost shows up in `base` rather than `history`. The `recency` and `robust` presets use `DecayRanker` instead, which shows a non-zero `history` column and weights recent selections more heavily.
+`hero` moved up because the `default` preset weights `HistoryPredictor` at 1.5×.
+One selection added 1.5 to its base score. Record it a few more times and it
+surfaces above words it would never beat on frequency alone. History persists
+across restarts with full ISO 8601 timestamps, so decay-based presets remain
+accurate after reload.
 
-History persists across restarts. Selections are stored with full ISO 8601 timestamps so decay-based presets remain accurate after reload.
+The `recency` and `robust` presets apply `DecayRanker` at the ranking layer
+instead - which is why the `history` column is non-zero for those presets. The
+`default` preset learns at the prediction layer, so the boost shows up in `base`.
 
 ---
 
@@ -69,13 +60,14 @@ History persists across restarts. Selections are stored with full ISO 8601 times
 
 The question was whether prediction and ranking should be one operation or two.
 
-On the surface they look like one thing: text goes in, ordered suggestions come out. But they're solving different problems:
+On the surface they look like one thing: text goes in, ordered suggestions come out.
+But they're solving different problems.
 
-**Prediction** asks "what words plausibly complete this prefix, and how likely is each one?" It's stateless. A frequency predictor doesn't know or care what you selected yesterday. A trie predictor doesn't know it either. Given the same input, they always return the same output.
+**Prediction** asks: "what words plausibly complete this prefix, and how likely is each one?" It's stateless. A frequency predictor doesn't know what you selected yesterday. A trie predictor doesn't know either. Given the same input, they always return the same output.
 
-**Ranking** asks "given these candidates and their scores, what order should the user see, and how should past behaviour change that?" It's stateful. It's where learning lives.
+**Ranking** asks: "given these candidates and their scores, what order should the user see, and how should past behaviour change that?" It's stateful. It's where learning lives.
 
-Separating them means each layer has a single job. A predictor can be replaced without touching the learning logic. The engine stays thin - it orchestrates, it doesn't contain scoring or ordering logic. And the layers can be tested completely independently, which matters when debugging why a particular word appeared where it did.
+Separating them means each layer has a single job. A predictor can be replaced without touching the learning logic. The engine stays thin - it orchestrates, it doesn't contain scoring or ordering logic. And the layers can be tested independently, which matters when debugging why a particular word appeared where it did.
 
 The tradeoff is more code than a single entangled function. It's worth it.
 
@@ -92,7 +84,7 @@ Four operating modes:
 | `recency` | Yes (exponential decay) | No | Recent selections should outweigh old ones |
 | `robust` | Yes | Yes | Real user input that may contain typos |
 
-`robust` runs approximate string matching via a BK-tree on every query. It recovers from mid-word typos ("helo" → "hello", "hlep" → "help") and is the only preset that catches first-character errors ("wello" → "hello"). The cost is ~1500µs vs ~65µs for the others - opt-in, not default.
+`robust` runs approximate string matching via a BK-tree on every query. It recovers from mid-word typos (`helo` → `hello`, `hlep` → `help`) and is the only preset that catches first-character errors (`wello` → `hello`). The cost is ~1500µs vs ~65µs for the others - opt-in, not default.
 
 ---
 
@@ -124,7 +116,7 @@ Suggestions + explanations
 
 ## Performance
 
-60,000 `suggest()` calls per preset, 482-word vocabulary:
+60,000 `suggest()` calls per preset, 312-word vocabulary:
 
 | Preset | Avg latency |
 |--------|-------------|
@@ -135,7 +127,7 @@ Suggestions + explanations
 
 `robust` uses a BK-tree (Burkhard-Keller, 1973) for approximate string matching. The BK-tree exploits the triangle inequality property of Levenshtein distance: if a node is distance `d` from the query, only children at keys within `[d-t, d+t]` can contain matches. This prunes large portions of the tree without evaluating them.
 
-In practice at `max_distance=2` with short prefixes, the search ball covers ~75% of the metric space and pruning is weak. BK-tree performance is strongest when the threshold is small relative to string length. For vocabularies over ~100k words, a trigram index is the right approach - precompute trigram sets per word, use set intersection to find candidates, then run exact edit distance on the shortlist.
+At `max_distance=2` with short prefixes over this vocabulary, the search visits around 75% of nodes - pruning is weak because the search ball covers most of the metric space. BK-tree performance is strongest when the threshold is small relative to string length. For vocabularies over ~100k words, a trigram index is the right next step: precompute trigram sets per word, use set intersection to find candidates, then run exact edit distance on the shortlist.
 
 ---
 
@@ -157,9 +149,9 @@ The test suite covers correctness properties rather than just happy paths:
 - **Explain invariant**: `final_score == base_score + history_boost` for every suggestion in every preset
 - **Ranker invariant**: `RuntimeError` is raised if a ranker adds or removes suggestions
 - **Decay double-counting regression**: `explain()` passes pre-ranking scores to each ranker so boosts aren't counted twice
-- **Persistence round-trip**: timestamps survive serialisation and deserialisation
-- **Schema migration**: v1 count-only history files load correctly under v2
-- **Predictor contract**: all five predictor implementations are verified against a shared invariant suite
+- **Persistence round-trip**: timestamps survive serialisation and deserialisation with sub-second accuracy
+- **Schema migration**: v1 count-only history files load correctly under v2, with epoch timestamps so decay treats them as maximally stale
+- **Predictor contract**: all predictor implementations are verified against a shared invariant suite
 
 CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
@@ -167,4 +159,6 @@ CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ## Why I built this
 
-I wanted to understand ranking systems from the inside. There's a big gap between "I know what autocomplete does" and "I can build one that handles learning, explainability, and performance tradeoffs in a principled way." This project is the attempt to close that gap. I learned more building it than I expected to.
+I originally wrote prediction and ranking as one function that took a prefix and returned ordered strings. It worked - until I tried to write a test for the learning behaviour and couldn't, because there was no seam to inject a controlled history. The separation into distinct layers came from that constraint, not from reading about design patterns first.
+
+The other thing that surprised me was how long the `explain()` bug stayed hidden. The invariant `final_score == base_score + history_boost` was satisfied - the numbers added up - but the engine was passing post-ranking scores into each ranker's `explain()` instead of the pre-ranking baseline. So `DecayRanker` was explaining a boost it had already applied, and the invariant check couldn't catch it because it only verified arithmetic, not whether the numbers meant what they were supposed to mean. That's a different kind of correctness.

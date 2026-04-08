@@ -5,6 +5,7 @@ description = "Adaptive, learning-based autocompletion engine for developer prod
 authors = ["Bonnie McConnell <bonniep.mcconnell@gmail.com>"]
 readme = "README.md"
 packages = [{ include = "aac", from = "src" }]
+include = ["src/aac/data/english_frequencies.json"]
 
 [tool.poetry.dependencies]
 python = ">=3.10"
