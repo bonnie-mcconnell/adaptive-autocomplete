@@ -17,4 +17,4 @@ def build_engine(
     Presets define structure only.
     """
     preset_def = get_preset(preset)
-    return preset_def.build(history)
+    return preset_def.build(history, None)

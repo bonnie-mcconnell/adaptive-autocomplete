@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aac.domain.history import History, HistoryEntry
+from aac.domain.history import History
 from aac.storage.base import HistoryStore
 
 # Storage format version. Increment when the schema changes in a
