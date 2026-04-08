@@ -33,6 +33,24 @@ class DebugState(TypedDict):
     suggestions: list[str]
 
 
+class _PredictorInfo(TypedDict):
+    name: str
+    weight: float
+
+
+class DescribeState(TypedDict):
+    """
+    Return type of AutocompleteEngine.describe().
+
+    Fully typed so callers (tests, CLI, tooling) get precise
+    type information rather than dict[str, object].
+    """
+
+    predictors: list[_PredictorInfo]
+    rankers: list[str]
+    history_entries: int
+
+
 class AutocompleteEngine:
     """
     Orchestrates prediction, ranking, learning, and explanation.
@@ -56,17 +74,15 @@ class AutocompleteEngine:
         ranker: Ranker | Sequence[Ranker] | None = None,
         history: History | None = None,
     ) -> None:
-        # Normalize predictors to WeightedPredictor
+        # Normalise predictors to WeightedPredictor
         self._predictors: list[WeightedPredictor] = []
         for p in predictors:
             if isinstance(p, WeightedPredictor):
                 self._predictors.append(p)
             else:
-                self._predictors.append(
-                    WeightedPredictor(predictor=p, weight=1.0)
-                )
+                self._predictors.append(WeightedPredictor(predictor=p, weight=1.0))
 
-        # Normalize rankers
+        # Normalise rankers
         if ranker is None:
             self._rankers: list[Ranker] = [ScoreRanker()]
         elif isinstance(ranker, Ranker):
@@ -95,9 +111,8 @@ class AutocompleteEngine:
         """
         Collect and aggregate scored suggestions from all predictors.
 
-        Notes:
-            - Predictor explanations are preserved but not interpreted here.
-            - Aggregation is additive across predictors and weights.
+        Aggregation is additive across predictors and weights.
+        Predictor explanations are preserved but not interpreted here.
         """
         aggregated: dict[str, ScoredSuggestion] = {}
 
@@ -107,7 +122,6 @@ class AutocompleteEngine:
             for scored in results:
                 key = scored.suggestion.value
                 weighted_score = scored.score * weighted.weight
-
                 trace_entry = (
                     f"Predictor={weighted.predictor.name}, "
                     f"weight={weighted.weight}, raw_score={scored.score}"
@@ -139,8 +153,8 @@ class AutocompleteEngine:
         """
         Apply rankers while enforcing engine invariants.
 
-        Rankers may reorder or rescore suggestions,
-        but must not add or remove entries.
+        Rankers may reorder or rescore suggestions, but must not add or
+        remove entries.
 
         Raises:
             RuntimeError: If a ranker adds or removes suggestions.
@@ -151,7 +165,6 @@ class AutocompleteEngine:
 
         for ranker in self._rankers:
             ranked = ranker.rank(ctx.text, ranked)
-
             after_values = {s.suggestion.value for s in ranked}
             if after_values != original_values:
                 added = after_values - original_values
@@ -177,7 +190,7 @@ class AutocompleteEngine:
         """
         Return ranked suggestions for user-facing consumption.
 
-        This API intentionally hides scores and explanations.
+        Scores and explanations are intentionally hidden.
         Use explain() or debug() for introspection.
         """
         ctx = CompletionContext(text)
@@ -188,28 +201,18 @@ class AutocompleteEngine:
         """
         Return ranked scored suggestions.
 
-        This is the primary scored-output API intended for:
-        - testing
-        - benchmarking
-        - engine-level inspection
-
-        Guarantees:
-        - ranking invariants enforced
-        - deterministic ordering
-        - finite scores
+        Intended for testing, benchmarking, and engine-level inspection.
+        Guarantees: ranking invariants enforced, deterministic ordering,
+        finite scores.
         """
         return self._apply_ranking(ctx, self._score(ctx))
 
-    def _predict_scored_unranked(
-        self, ctx: CompletionContext
-    ) -> list[ScoredSuggestion]:
+    def _predict_scored_unranked(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
         """
         INTERNAL: Return scored suggestions WITHOUT ranking.
 
-        WARNING:
-            - Does not apply rankers
-            - Does not enforce ranking invariants
-            - Intended for diagnostics / internal inspection only
+        Does not apply rankers or enforce ranking invariants.
+        Intended for diagnostics and internal inspection only.
         """
         return self._score(ctx)
 
@@ -232,13 +235,11 @@ class AutocompleteEngine:
         """
         ctx = CompletionContext(text)
 
-        # Capture pre-ranking scores — these are the base signals each
-        # ranker's explain() should reason about independently.
+        # Capture pre-ranking scores - the clean baseline each ranker
+        # should reason about independently.
         pre_ranking = self._score(ctx)
         ranked = self._apply_ranking(ctx, pre_ranking)
 
-        # Build a lookup from value -> pre-ranking ScoredSuggestion so
-        # each ranker explains its contribution from a clean baseline.
         pre_ranking_by_value = {s.suggestion.value: s for s in pre_ranking}
         pre_ranking_ordered = [
             pre_ranking_by_value[s.suggestion.value] for s in ranked
@@ -260,9 +261,7 @@ class AutocompleteEngine:
         ]
 
     def explain_as_dicts(self, text: str) -> list[dict[str, float | str]]:
-        """
-        Convenience adapter for CLI / serialization layers.
-        """
+        """Convenience adapter for CLI and serialisation layers."""
         return [
             {
                 "value": e.value,
@@ -281,13 +280,12 @@ class AutocompleteEngine:
         """
         Record a user selection for learning.
 
-        Writes to the engine history directly, then calls `record(ctx, value)`
+        Writes to engine history directly, then calls record(ctx, value)
         on any predictor that implements that method. This hook exists for
-        predictors that maintain private state beyond the shared History
-        (e.g. a predictor with its own internal model).
+        predictors that maintain private state beyond the shared History.
 
         Note: HistoryPredictor reads from the shared History and does not
-        implement a `record` hook — the engine's direct write is sufficient.
+        implement a record hook - the engine's direct write is sufficient.
         Adding a hook to HistoryPredictor would record each selection twice.
         """
         ctx = CompletionContext(text)
@@ -299,20 +297,17 @@ class AutocompleteEngine:
                 record(ctx, value)
 
     # ------------------------------------------------------------------
-    # Developer/debug API (INTENTIONALLY UNSTABLE)
+    # Debug (INTENTIONALLY UNSTABLE)
     # ------------------------------------------------------------------
 
     def debug(self, text: str) -> DebugState:
         """
-        Developer-only debug surface.
-
-        NOT a stable API.
+        Developer-only debug surface. NOT a stable API.
         Returned objects MUST NOT be mutated.
         """
         ctx = CompletionContext(text)
         scored = self._score(ctx)
         ranked = self._apply_ranking(ctx, scored)
-
         return {
             "input": text,
             "scored": scored,
@@ -324,31 +319,20 @@ class AutocompleteEngine:
     # Introspection
     # ------------------------------------------------------------------
 
-    def describe(self) -> dict[str, object]:
+    def describe(self) -> DescribeState:
         """
-        Return a human-readable description of the engine configuration.
+        Return a typed description of the engine configuration.
 
-        Intended for:
-        - CLI inspection
-        - debugging
-        - documentation
+        Intended for CLI inspection, debugging, and documentation.
         """
         return {
             "predictors": [
-                {
-                    "name": wp.predictor.name,
-                    "weight": wp.weight,
-                }
+                {"name": wp.predictor.name, "weight": wp.weight}
                 for wp in self._predictors
             ],
-            "rankers": [
-                r.__class__.__name__
-                for r in self._rankers
-            ],
+            "rankers": [r.__class__.__name__ for r in self._rankers],
             "history_entries": len(list(self._history.entries())),
         }
-
-    # ------------------------------------------------------------------
 
     @property
     def history(self) -> History:
