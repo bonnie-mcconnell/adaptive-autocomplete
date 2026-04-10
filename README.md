@@ -177,7 +177,7 @@ CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
-## Why I built this
+## Build Process
 
 I originally wrote prediction and ranking as one function that took a prefix and returned ordered strings. It worked, until I tried to write a test for the learning behaviour and couldn't, because there was no seam to inject a controlled history. The separation into distinct layers came from that constraint, not from reading about design patterns first.
 
