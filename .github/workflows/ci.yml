@@ -1,10 +1,10 @@
 name: CI
 
 on:
-  push: 
+  push:
     branches: ["main"]
   pull_request:
- 
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -42,9 +42,4 @@ jobs:
         run: poetry run mypy src
 
       - name: Tests
-        run: |
-          if [ -d tests ] && [ "$(ls -A tests)" ]; then
-            poetry run pytest
-          else
-            echo "No tests present, skipping pytest"
-          fi
+        run: poetry run pytest
