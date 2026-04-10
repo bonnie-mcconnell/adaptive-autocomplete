@@ -1,1 +1,0 @@
-"""Adaptive Autocomplete core package."""
