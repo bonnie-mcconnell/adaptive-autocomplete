@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -53,6 +52,7 @@ class Suggestion:
     """
     A candidate completion.
     """
+
     value: str
 
 
@@ -61,6 +61,7 @@ class ScoredSuggestion:
     """
     A suggestion with an associated score.
     """
+
     suggestion: Suggestion
     score: float
     explanation: PredictorExplanation | None = None
@@ -75,6 +76,7 @@ class Predictor(Protocol):
     """
     Contract implemented by all predictors.
     """
+
     name: str
 
     def predict(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
@@ -89,32 +91,25 @@ class PredictorExplanation:
     Represents a raw signal before any ranking,
     normalization, or aggregation occurs.
     """
+
     value: str
     score: float
     source: str
     confidence: float
-    
+
 
 @dataclass(frozen=True)
 class WeightedPredictor:
     """
     Predictor paired with a weight applied during aggregation.
     """
+
     predictor: Predictor
     weight: float = 1.0
 
     @property
     def name(self) -> str:
         return self.predictor.name
-
-
-@dataclass(frozen=True)
-class PredictionResult:
-    """
-    Output of a single predictor before aggregation.
-    """
-    predictor: str
-    suggestions: Sequence[ScoredSuggestion]
 
 
 def ensure_context(ctx: CompletionContext | str) -> CompletionContext:
