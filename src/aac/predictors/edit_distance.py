@@ -10,20 +10,9 @@ from aac.domain.types import (
     Suggestion,
     ensure_context,
 )
-from aac.predictors.bk_tree import BKTree
-from aac.predictors.bk_tree import _levenshtein as _lev
+from aac.predictors.bk_tree import BKTree, levenshtein
 
-
-def levenshtein(a: str, b: str) -> int:
-    """
-    Compute Levenshtein edit distance.
-
-    Public API for callers outside this module. Delegates to the
-    shared implementation in bk_tree to avoid duplication.
-
-    Cost model: insertion=1, deletion=1, substitution=1.
-    """
-    return _lev(a, b)
+__all__ = ["EditDistancePredictor", "levenshtein"]
 
 
 class EditDistancePredictor(Predictor):
@@ -43,7 +32,7 @@ class EditDistancePredictor(Predictor):
     Performance characteristics:
         BK-tree pruning degrades when max_distance is large relative to
         the query length. At max_distance=2 with 4-character prefixes,
-        the search visits ~75% of nodes in a 482-word vocabulary - the
+        the search visits ~75% of nodes in a 312-word vocabulary - the
         search ball is large enough that triangle inequality pruning helps
         little. At max_distance=1 pruning is substantially more effective.
 

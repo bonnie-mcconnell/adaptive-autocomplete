@@ -18,8 +18,8 @@ Search for query q within threshold t:
     |d - k| <= t. All other subtrees are provably unreachable.
     Time: O(log n) average for small t; degrades toward O(n) when t
     is large relative to the string lengths in the tree. At max_distance=2
-    with 4-character prefixes over a 482-word English vocabulary, the
-    search visits approximately 75% of nodes — the pruning is weak
+    with 4-character prefixes over a 312-word English vocabulary, the
+    search visits approximately 75% of nodes - the pruning is weak
     because the search ball covers most of the metric space.
 
 References:
@@ -53,7 +53,7 @@ class BKTree:
 
     Supports approximate string matching queries. All words within
     max_distance Levenshtein edits of the query are returned, including
-    cases where the first character differs — a property that simpler
+    cases where the first character differs - a property that simpler
     first-character indexes do not provide.
 
     Usage:
@@ -90,9 +90,9 @@ class BKTree:
 
         node = self._root
         while True:
-            d = _levenshtein(word, node.word)
+            d = levenshtein(word, node.word)
             if d == 0:
-                # Duplicate word — BK-trees don't store duplicates.
+                # Duplicate word - BK-trees don't store duplicates.
                 return
             if d not in node.children:
                 node.children[d] = _Node(word)
@@ -133,7 +133,7 @@ class BKTree:
 
         while stack:
             node = stack.pop()
-            d = _levenshtein(query, node.word)
+            d = levenshtein(query, node.word)
 
             if d <= max_distance:
                 yield node.word, d
@@ -152,12 +152,12 @@ class BKTree:
 # Levenshtein distance
 # ------------------------------------------------------------------
 
-def _levenshtein(a: str, b: str) -> int:
+def levenshtein(a: str, b: str) -> int:
     """
     Compute Levenshtein edit distance using a space-optimised DP.
 
     Swaps arguments so the shorter string drives the outer loop,
-    keeping memory at O(min(|a|, |b|)) rather than O(|a| × |b|).
+    keeping memory at O(min(|a|, |b|)) rather than O(|a| x |b|).
 
     Cost model: insertion=1, deletion=1, substitution=1.
     """
@@ -183,3 +183,8 @@ def _levenshtein(a: str, b: str) -> int:
         prev = curr
 
     return prev[-1]
+
+
+# Keep private alias for backward compatibility with any code that
+# imported _levenshtein directly. Will be removed in a future version.
+_levenshtein = levenshtein
