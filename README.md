@@ -57,16 +57,16 @@ heat
 hero
 
 $ aac explain he
-her          base=  250.00  history=  +0.00  total=  250.00  [source=score]
-heap         base=  105.00  history=  +0.00  total=  105.00  [source=score]
-hello        base=  105.00  history=  +0.00  total=  105.00  [source=score]
-help         base=  104.00  history=  +0.00  total=  104.00  [source=score]
-here         base=  103.00  history=  +0.00  total=  103.00  [source=score]
-heart        base=   96.00  history=  +0.00  total=   96.00  [source=score]
-heavy        base=   95.00  history=  +0.00  total=   95.00  [source=score]
-health       base=   87.00  history=  +0.00  total=   87.00  [source=score]
-heat         base=   86.00  history=  +0.00  total=   86.00  [source=score]
-hero         base=   73.00  history=  +0.00  total=   73.00  [source=score]
+her          base=  250.00  history=    0.00  total=  250.00  [source=score]
+heap         base=  105.00  history=    0.00  total=  105.00  [source=score]
+hello        base=  105.00  history=    0.00  total=  105.00  [source=score]
+help         base=  104.00  history=    0.00  total=  104.00  [source=score]
+here         base=  103.00  history=    0.00  total=  103.00  [source=score]
+heart        base=   96.00  history=    0.00  total=   96.00  [source=score]
+heavy        base=   95.00  history=    0.00  total=   95.00  [source=score]
+health       base=   87.00  history=    0.00  total=   87.00  [source=score]
+heat         base=   86.00  history=    0.00  total=   86.00  [source=score]
+hero         base=   73.00  history=    0.00  total=   73.00  [source=score]
 ```
 
 After two selections, `hero` moves from outside the top 10 to position 10, passing `hey`. Its base score went from 70 to 73 - each selection adds 1.5 (the `HistoryPredictor` weight) to its aggregated score. Record it a few more times and it continues to climb.
@@ -177,7 +177,7 @@ CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
-## Build Process
+## Why I built this
 
 I originally wrote prediction and ranking as one function that took a prefix and returned ordered strings. It worked, until I tried to write a test for the learning behaviour and couldn't, because there was no seam to inject a controlled history. The separation into distinct layers came from that constraint, not from reading about design patterns first.
 
