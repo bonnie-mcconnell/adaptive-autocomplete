@@ -32,7 +32,7 @@ def test_does_not_return_non_matching_words(predictor: FrequencyPredictor) -> No
 
 
 def test_exact_match_excluded(predictor: FrequencyPredictor) -> None:
-    # Typing the complete word should not return the word itself —
+    # Typing the complete word should not return the word itself -
     # completing 'hello' to 'hello' adds no information.
     results = predictor.predict(CompletionContext("hello"))
     values = {r.suggestion.value for r in results}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aac.domain.types import CompletionContext, PredictionResult, ScoredSuggestion, Suggestion
+from aac.domain.types import CompletionContext, ScoredSuggestion, Suggestion
 
 
 def test_prefix_without_cursor() -> None:
@@ -36,16 +36,10 @@ def test_prefix_whitespace_only_returns_empty() -> None:
 def test_scored_suggestion_holds_score() -> None:
     s = Suggestion("checkout")
     scored = ScoredSuggestion(suggestion=s, score=0.8)
-
     assert scored.suggestion.value == "checkout"
     assert scored.score == 0.8
 
 
-def test_prediction_result_structure() -> None:
-    result = PredictionResult(
-        predictor="frequency",
-        suggestions=[],
-    )
-
-    assert result.predictor == "frequency"
-    assert result.suggestions == []
+def test_scored_suggestion_value_property() -> None:
+    scored = ScoredSuggestion(suggestion=Suggestion("hello"), score=1.0)
+    assert scored.value == "hello"

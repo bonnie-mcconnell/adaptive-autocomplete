@@ -16,7 +16,7 @@ class TrieNode:
     """
     A single node in the trie.
 
-    Mutable by design — nodes accumulate children during construction.
+    Mutable by design - nodes accumulate children during construction.
     Not a frozen dataclass because the trie is built incrementally.
     """
 
@@ -70,7 +70,7 @@ class TriePrefixPredictor(Predictor):
     Prefix predictor backed by a trie for O(prefix_length) lookup.
 
     Suitable when you have a word list but no frequency data. Scores
-    all matches equally at 1.0 — combine with a history or frequency
+    all matches equally at 1.0 - combine with a history or frequency
     predictor for score differentiation. For use cases where frequency
     data is available, FrequencyPredictor builds its own prefix index
     and carries per-word scores through the pipeline.

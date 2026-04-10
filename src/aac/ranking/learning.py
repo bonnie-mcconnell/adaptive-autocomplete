@@ -25,7 +25,7 @@ class LearningRanker(Ranker, LearnsFromHistory):
 
         If your engine includes HistoryPredictor, that predictor already
         emits history-scored candidates at the prediction layer. Adding
-        LearningRanker on top would count history twice — once in prediction
+        LearningRanker on top would count history twice - once in prediction
         scores and again in the ranking boost. In that configuration, omit
         LearningRanker and rely on HistoryPredictor's weight instead.
 

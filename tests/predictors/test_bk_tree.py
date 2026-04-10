@@ -7,7 +7,7 @@ vocabulary using the same distance function.
 """
 from __future__ import annotations
 
-from aac.predictors.bk_tree import BKTree, _levenshtein
+from aac.predictors.bk_tree import BKTree, levenshtein
 
 
 def _linear_search(
@@ -16,7 +16,7 @@ def _linear_search(
     max_distance: int,
 ) -> set[str]:
     """Brute-force reference implementation for correctness comparison."""
-    return {w for w in words if _levenshtein(query, w) <= max_distance}
+    return {w for w in words if levenshtein(query, w) <= max_distance}
 
 
 def _bk_search(tree: BKTree, query: str, max_distance: int) -> set[str]:
@@ -92,13 +92,12 @@ def test_matches_brute_force_distance_2() -> None:
 
 def test_no_match_returns_empty() -> None:
     tree = BKTree(VOCAB)
-    # 'zzzzz' is far from every word in the vocab
     results = _bk_search(tree, "zzzzz", max_distance=1)
     assert results == set()
 
 
 def test_first_character_typo_detected() -> None:
-    # BK-tree must catch first-character errors — unlike a first-char index.
+    # BK-tree must catch first-character errors - unlike a first-char index.
     tree = BKTree(["hello", "help", "world"])
     results = _bk_search(tree, "wello", max_distance=2)
     # levenshtein('wello', 'hello') = 1 (w->h), so 'hello' must appear
@@ -108,8 +107,8 @@ def test_first_character_typo_detected() -> None:
 def test_distance_values_are_correct() -> None:
     tree = BKTree(["hello", "help"])
     results = {w: d for w, d in tree.search("helo", max_distance=2)}
-    assert results["hello"] == _levenshtein("helo", "hello")
-    assert results["help"] == _levenshtein("helo", "help")
+    assert results["hello"] == levenshtein("helo", "hello")
+    assert results["help"] == levenshtein("helo", "help")
 
 
 # ------------------------------------------------------------------
@@ -130,6 +129,5 @@ def test_distance_zero_is_exact_match_only() -> None:
 def test_large_max_distance_returns_all() -> None:
     words = ["hello", "world"]
     tree = BKTree(words)
-    # max_distance=100 should return everything
     results = _bk_search(tree, "hello", max_distance=100)
     assert results == set(words)

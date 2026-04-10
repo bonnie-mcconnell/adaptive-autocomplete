@@ -30,7 +30,7 @@ class EnginePreset:
     Named, validated engine composition.
 
     A preset represents intent, not configuration detail.
-    Metadata fields drive describe_presets() output — update them
+    Metadata fields drive describe_presets() output - update them
     here when adding or changing a preset, not in describe_presets().
     """
     name: str
@@ -259,7 +259,7 @@ def describe_presets() -> str:
 
     Intended for CLI and documentation output.
     Descriptions are derived from EnginePreset metadata fields,
-    not hardcoded — update the PRESETS registry to change output.
+    not hardcoded - update the PRESETS registry to change output.
     """
     lines: list[str] = []
 

@@ -36,7 +36,7 @@ class JsonHistoryStore(HistoryStore):
     Migration:
         Version 1 files (the old count-only format) are loaded with
         timestamps set to the Unix epoch. This means all migrated
-        entries are treated as maximally stale by decay-based rankers —
+        entries are treated as maximally stale by decay-based rankers -
         they contribute counts but carry no recency signal. This is the
         safest migration: old data can only boost, never mislead.
 
@@ -145,7 +145,7 @@ def _load_v2(data: dict[str, object]) -> History:
         except ValueError:
             continue
 
-        # Ensure timezone-aware — fromisoformat on Python 3.10 may
+        # Ensure timezone-aware - fromisoformat on Python 3.10 may
         # return naive datetimes for strings without offset info.
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
