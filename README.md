@@ -28,31 +28,52 @@ Requires Python 3.10+.
 ```
 $ aac suggest he
 her
-hello
 heap
+hello
 help
 here
 heart
+heavy
+health
+heat
+hey
 
 $ aac record he hero
 Recorded selection 'hero' for input 'he'
 
+$ aac record he hero
+Recorded selection 'hero' for input 'he'
+
+$ aac suggest he
+her
+heap
+hello
+help
+here
+heart
+heavy
+health
+heat
+hero
+
 $ aac explain he
-her          base= 6900.00  history=  +0.00  total= 6900.00  [source=score]
-hello        base=  760.00  history=  +0.00  total=  760.00  [source=score]
-hero         base=  200.00  history=  +1.50  total=  201.50  [source=score]
-...
+her          base=  250.00  history=  +0.00  total=  250.00  [source=score]
+heap         base=  105.00  history=  +0.00  total=  105.00  [source=score]
+hello        base=  105.00  history=  +0.00  total=  105.00  [source=score]
+help         base=  104.00  history=  +0.00  total=  104.00  [source=score]
+here         base=  103.00  history=  +0.00  total=  103.00  [source=score]
+heart        base=   96.00  history=  +0.00  total=   96.00  [source=score]
+heavy        base=   95.00  history=  +0.00  total=   95.00  [source=score]
+health       base=   87.00  history=  +0.00  total=   87.00  [source=score]
+heat         base=   86.00  history=  +0.00  total=   86.00  [source=score]
+hero         base=   73.00  history=  +0.00  total=   73.00  [source=score]
 ```
 
-`hero` moved up because the `default` preset weights `HistoryPredictor` at 1.5×.
-One selection added 1.5 to its base score. Record it a few more times and it
-surfaces above words it would never beat on frequency alone. History persists
-across restarts with full ISO 8601 timestamps, so decay-based presets remain
-accurate after reload.
+After two selections, `hero` moves from outside the top 10 to position 10, passing `hey`. Its base score went from 70 to 73 - each selection adds 1.5 (the `HistoryPredictor` weight) to its aggregated score. Record it a few more times and it continues to climb.
 
-The `recency` and `robust` presets apply `DecayRanker` at the ranking layer
-instead - which is why the `history` column is non-zero for those presets. The
-`default` preset learns at the prediction layer, so the boost shows up in `base`.
+In the `default` preset, history learning happens at the **prediction** layer, not the ranking layer. `HistoryPredictor` emits history-scored candidates which are weighted and aggregated with frequency scores before ranking. That is why the boost appears in `base` rather than `history`. The `recency` and `robust` presets apply `DecayRanker` at the ranking layer instead, which is why their `history` column is non-zero and weights recent selections more heavily than old ones.
+
+History persists across restarts with full ISO 8601 timestamps, so decay-based presets remain accurate after reload.
 
 ---
 
@@ -60,8 +81,7 @@ instead - which is why the `history` column is non-zero for those presets. The
 
 The question was whether prediction and ranking should be one operation or two.
 
-On the surface they look like one thing: text goes in, ordered suggestions come out.
-But they're solving different problems.
+On the surface they look like one thing: text goes in, ordered suggestions come out. But they're solving different problems.
 
 **Prediction** asks: "what words plausibly complete this prefix, and how likely is each one?" It's stateless. A frequency predictor doesn't know what you selected yesterday. A trie predictor doesn't know either. Given the same input, they always return the same output.
 
@@ -116,7 +136,7 @@ Suggestions + explanations
 
 ## Performance
 
-60,000 `suggest()` calls per preset, 312-word vocabulary:
+60,000 `suggest()` calls across 6 query prefixes:
 
 | Preset | Avg latency |
 |--------|-------------|
@@ -135,7 +155,7 @@ At `max_distance=2` with short prefixes over this vocabulary, the search visits 
 
 **The default preset ignores time.** Raw selection counts don't decay. Something selected 50 times six months ago outweighs something selected twice yesterday. The `recency` preset fixes this with exponential decay, but the better design would be building time-awareness into the core history model rather than routing around it with a preset. Timestamps are persisted correctly - the naivety is in the `default` ranker, which discards them.
 
-**Presets are a leaky abstraction.** They configure internal wiring - which predictors, which rankers, which weights, but the line between "what's a preset" and "what's a configuration parameter" was never cleanly resolved. Starting over, I'd remove presets entirely and let callers pass their own predictor and ranker stacks directly.
+**Presets are a leaky abstraction.** They configure internal wiring - which predictors, which rankers, which weights - but the line between "what's a preset" and "what's a configuration parameter" was never cleanly resolved. Starting over, I'd remove presets entirely and let callers pass their own predictor and ranker stacks directly.
 
 **Edit distance at scale needs a trigram index.** The BK-tree is correct and theoretically O(log n), but degrades at high thresholds relative to query length. The implementation covers this vocabulary; it would not cover a 100k-word corpus without a structural change.
 
@@ -157,8 +177,8 @@ CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
-## Build Process
+## Why I built this
 
 I originally wrote prediction and ranking as one function that took a prefix and returned ordered strings. It worked, until I tried to write a test for the learning behaviour and couldn't, because there was no seam to inject a controlled history. The separation into distinct layers came from that constraint, not from reading about design patterns first.
 
-The other thing that surprised me was how long the `explain()` bug stayed hidden. The invariant `final_score == base_score + history_boost` was satisfied - the numbers added up - but the engine was passing post-ranking scores into each ranker's `explain()` instead of the pre-ranking baseline. So `DecayRanker` was explaining a boost it had already applied, and the invariant check couldn't catch it because it only verified arithmetic, not whether the numbers meant what they were supposed to mean. 
+The other thing that surprised me was how long the `explain()` bug stayed hidden. The invariant `final_score == base_score + history_boost` was satisfied - the numbers added up - but the engine was passing post-ranking scores into each ranker's `explain()` instead of the pre-ranking baseline. So `DecayRanker` was explaining a boost it had already applied, and the invariant check couldn't catch it because it only verified arithmetic, not whether the numbers meant what they were supposed to mean.
