@@ -16,7 +16,12 @@ from pathlib import Path
 import pytest
 
 from aac.domain.history import History
-from aac.domain.types import CompletionContext, WeightedPredictor
+from aac.domain.types import (
+    CompletionContext,
+    ScoredSuggestion,
+    Suggestion,
+    WeightedPredictor,
+)
 from aac.engine.engine import AutocompleteEngine
 from aac.predictors.edit_distance import EditDistancePredictor, levenshtein
 from aac.predictors.frequency import FrequencyPredictor
@@ -125,19 +130,13 @@ def test_decay_function_rejects_naive_event_time() -> None:
 def test_decay_ranker_skips_entries_for_other_prefixes() -> None:
     """_decayed_counts must not leak boosts across prefixes."""
     h = History()
-    h.record("wo", "world")  # different prefix
+    h.record("wo", "world")  # different prefix - must not affect "he" completions
     ranker = DecayRanker(
         history=h,
         decay=DecayFunction(half_life_seconds=3600),
         now=datetime(2024, 1, 1, tzinfo=timezone.utc),
     )
-    suggestions = [
-        pytest.importorskip("aac.domain.types").ScoredSuggestion(
-            suggestion=pytest.importorskip("aac.domain.types").Suggestion("world"),
-            score=1.0,
-        )
-    ]
-    # "world" was recorded under "wo" not "he" - no boost expected
+    suggestions = [ScoredSuggestion(suggestion=Suggestion("world"), score=1.0)]
     result = ranker.rank("he", suggestions)
     assert result[0].score == 1.0
 
@@ -173,8 +172,6 @@ def test_engine_history_property_is_the_injected_instance() -> None:
 
 def test_engine_record_calls_predictor_hook_if_present() -> None:
     """A predictor with a record() hook must have it called on selection."""
-    from aac.domain.types import ScoredSuggestion, Suggestion
-
     recorded: list[tuple[str, str]] = []
 
     class HookPredictor:
