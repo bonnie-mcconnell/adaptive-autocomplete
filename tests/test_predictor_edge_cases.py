@@ -8,8 +8,6 @@ adapters, and preset output.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -214,51 +212,36 @@ def test_describe_presets_contains_all_preset_names() -> None:
 # JsonHistoryStore defensive branches
 # ------------------------------------------------------------------
 
-def _tmp() -> Path:
-    fd, name = tempfile.mkstemp(suffix=".json")
-    os.close(fd)
-    return Path(name)
+def test_json_store_non_list_entries_returns_empty(tmp_path: Path) -> None:
+    path = tmp_path / "bad_entries.json"
+    path.write_text(
+        json.dumps({"version": 2, "entries": "not-a-list"}), encoding="utf-8"
+    )
+    assert list(JsonHistoryStore(path).load().entries()) == []
 
 
-def test_json_store_non_list_entries_returns_empty() -> None:
-    path = _tmp()
-    try:
-        path.write_text(
-            json.dumps({"version": 2, "entries": "not-a-list"}), encoding="utf-8"
-        )
-        assert list(JsonHistoryStore(path).load().entries()) == []
-    finally:
-        path.unlink()
+def test_v2_non_string_timestamp_skipped(tmp_path: Path) -> None:
+    path = tmp_path / "bad_ts.json"
+    payload = {
+        "version": 2,
+        "entries": [
+            {"prefix": "he", "value": "hello", "timestamp": 12345},
+            {"prefix": "he", "value": "help", "timestamp": "2024-01-01T12:00:00+00:00"},
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    counts = JsonHistoryStore(path).load().counts_for_prefix("he")
+    assert "help" in counts
+    assert "hello" not in counts
 
 
-def test_v2_non_string_timestamp_skipped() -> None:
-    path = _tmp()
-    try:
-        payload = {
-            "version": 2,
-            "entries": [
-                {"prefix": "he", "value": "hello", "timestamp": 12345},
-                {"prefix": "he", "value": "help", "timestamp": "2024-01-01T12:00:00+00:00"},
-            ],
-        }
-        path.write_text(json.dumps(payload), encoding="utf-8")
-        counts = JsonHistoryStore(path).load().counts_for_prefix("he")
-        assert "help" in counts
-        assert "hello" not in counts
-    finally:
-        path.unlink()
-
-
-def test_v2_naive_timestamp_gets_utc() -> None:
-    path = _tmp()
-    try:
-        payload = {
-            "version": 2,
-            "entries": [{"prefix": "he", "value": "hello", "timestamp": "2024-01-01T12:00:00"}],
-        }
-        path.write_text(json.dumps(payload), encoding="utf-8")
-        entries = list(JsonHistoryStore(path).load().entries())
-        assert len(entries) == 1
-        assert entries[0].timestamp.tzinfo is not None
-    finally:
-        path.unlink()
+def test_v2_naive_timestamp_gets_utc(tmp_path: Path) -> None:
+    path = tmp_path / "naive_ts.json"
+    payload = {
+        "version": 2,
+        "entries": [{"prefix": "he", "value": "hello", "timestamp": "2024-01-01T12:00:00"}],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    entries = list(JsonHistoryStore(path).load().entries())
+    assert len(entries) == 1
+    assert entries[0].timestamp.tzinfo is not None

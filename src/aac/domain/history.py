@@ -15,7 +15,7 @@ class HistoryEntry:
         prefix: The user input prefix at the time of selection.
         value: The completion value selected by the user.
         timestamp: When the selection occurred (UTC, timezone-aware).
-    
+
     Notes:
         - Entries are immutable once created.
         - Timestamps are always stored in UTC.
@@ -38,7 +38,7 @@ class History:
     Append-only store of user completion events.
 
     This is the single source of truth for all learning signals.
-    
+
     Design guarantees:
         - Entries are immutable once recorded
         - No deletion or in-place mutation

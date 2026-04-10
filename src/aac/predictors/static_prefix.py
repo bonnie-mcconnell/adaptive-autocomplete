@@ -15,6 +15,11 @@ from aac.domain.types import (
 class StaticPrefixPredictor(Predictor):
     """
     Deterministic prefix-based predictor over a fixed vocabulary.
+
+    Intended for use in tests and examples where a controlled,
+    fully predictable predictor is needed without frequency data.
+    Not part of the public API - see FrequencyPredictor or
+    TriePrefixPredictor for production use.
     """
 
     name = "static_prefix"
