@@ -15,11 +15,11 @@ class HistoryStore(ABC):
         """
         Load history from storage.
         """
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
     @abstractmethod
     def save(self, history: History) -> None:
         """
         Persist history to storage.
         """
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
