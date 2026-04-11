@@ -48,10 +48,27 @@ class History:
     This class intentionally separates:
         - In-memory domain representation (HistoryEntry)
         - Serialized representation (snapshot)
+
+    Performance:
+        A prefix index is maintained alongside the entry list so that
+        prefix-scoped reads are O(k) in the number of matching entries
+        rather than O(n) in the total history length. The index is a
+        defaultdict keyed by prefix, holding the list of matching entries
+        in insertion order. This adds one dict write per record() call
+        and no overhead on reads.
+
+        Tradeoff: the index holds references to the same HistoryEntry
+        objects as _entries, so memory overhead is one pointer per entry,
+        not a full copy. The append-only invariant makes the index safe
+        to maintain incrementally - entries are never mutated or removed,
+        so the index never needs to be rebuilt.
     """
 
     def __init__(self) -> None:
         self._entries: list[HistoryEntry] = []
+        # Prefix index: maps prefix -> entries with that prefix, in
+        # insertion order. Maintained incrementally on every record().
+        self._by_prefix: defaultdict[str, list[HistoryEntry]] = defaultdict(list)
 
     # ------------------------------------------------------------
     # Recording
@@ -85,13 +102,15 @@ class History:
         if timestamp.tzinfo is None:
             raise ValueError("timestamp must be timezone-aware")
 
-        self._entries.append(
-            HistoryEntry(
-                prefix=str(prefix),
-                value=str(value),
-                timestamp=timestamp,
-            )
+        entry = HistoryEntry(
+            prefix=str(prefix),
+            value=str(value),
+            timestamp=timestamp,
         )
+        self._entries.append(entry)
+        # Maintain prefix index incrementally. One dict write per record(),
+        # zero overhead on reads.
+        self._by_prefix[entry.prefix].append(entry)
 
     # ------------------------------------------------------------
     # Read APIs
@@ -110,6 +129,8 @@ class History:
         """
         Return all history entries matching a given prefix.
 
+        O(k) in the number of matching entries via the prefix index.
+
         Parameters:
             prefix: The prefix to filter by.
 
@@ -117,17 +138,13 @@ class History:
             A tuple of HistoryEntry objects.
         """
         prefix = str(prefix)
-        return tuple(
-            e for e in self._entries
-            if e.prefix == prefix
-        )
+        return tuple(self._by_prefix.get(prefix, []))
 
     def counts_for_prefix(self, prefix: str) -> dict[str, int]:
         """
         Count how often each value was selected for a given prefix.
 
-        This is a backwards-compatible, time-agnostic API intended
-        for simple learning strategies.
+        O(k) in the number of matching entries via the prefix index.
 
         Parameters:
             prefix: The prefix to aggregate counts for.
@@ -138,9 +155,8 @@ class History:
         prefix = str(prefix)
         counts: dict[str, int] = defaultdict(int)
 
-        for e in self._entries:
-            if e.prefix == prefix:
-                counts[e.value] += 1
+        for e in self._by_prefix.get(prefix, []):
+            counts[e.value] += 1
 
         return dict(counts)
 
@@ -152,7 +168,7 @@ class History:
         """
         Count selections for a prefix occurring at or after a timestamp.
 
-        Enables recency-aware or time-decayed learning strategies.
+        O(k) in the number of matching entries via the prefix index.
 
         Parameters:
             prefix: The prefix to aggregate counts for.
@@ -167,12 +183,9 @@ class History:
         prefix = str(prefix)
         counts: dict[str, int] = defaultdict(int)
 
-        for e in self._entries:
-            if e.prefix != prefix:
-                continue
-            if e.timestamp < since:
-                continue
-            counts[e.value] += 1
+        for e in self._by_prefix.get(prefix, []):
+            if e.timestamp >= since:
+                counts[e.value] += 1
 
         return dict(counts)
 
