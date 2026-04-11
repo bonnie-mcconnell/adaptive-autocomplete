@@ -20,9 +20,9 @@ def main() -> None:
 
     parser.add_argument(
         "--preset",
-        default=available_presets()[0],
+        default="production",
         choices=available_presets(),
-        help="Autocomplete engine preset (controls predictors, ranking, learning)",
+        help="Autocomplete engine preset (controls predictors, ranking, learning). Default: production",
     )
 
     parser.add_argument(
