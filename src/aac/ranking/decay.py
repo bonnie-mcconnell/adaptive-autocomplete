@@ -77,10 +77,7 @@ class DecayRanker(Ranker, LearnsFromHistory):
         now = self._now_utc()
         counts: dict[str, float] = defaultdict(float)
 
-        for entry in self.history.entries():
-            if entry.prefix != prefix:
-                continue
-
+        for entry in self.history.entries_for_prefix(prefix):
             counts[entry.value] += self._decay.weight(
                 now=now,
                 event_time=entry.timestamp,

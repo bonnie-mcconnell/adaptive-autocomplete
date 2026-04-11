@@ -27,7 +27,7 @@ class Ranker(ABC):
         """
         Return suggestions ordered by preference.
         """
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
     @abstractmethod
     def explain(
@@ -38,4 +38,4 @@ class Ranker(ABC):
         """
         Return ranking explanations aligned exactly with rank().
         """
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
