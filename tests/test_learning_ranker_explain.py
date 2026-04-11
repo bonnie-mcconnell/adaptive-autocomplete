@@ -103,16 +103,44 @@ def test_engine_and_learning_ranker_share_history() -> None:
 
 
 def test_history_learning_boosts_selected_value() -> None:
-    """End-to-end: recording via history directly must improve suggestion rank."""
-    from aac.presets import get_preset
+    """End-to-end: recording via history must improve suggestion rank.
 
+    Uses a controlled vocabulary so the test is independent of the bundled
+    word list and its frequency ordering. With the global 48k vocabulary,
+    low-frequency words like 'hero' may not appear in the top-N results,
+    making the assertion vacuously impossible.
+    """
+    from aac.domain.types import WeightedPredictor
+    from aac.predictors.frequency import FrequencyPredictor
+    from aac.predictors.history import HistoryPredictor
+    from aac.ranking.score import ScoreRanker
+
+    # Controlled vocabulary: hero and help are close in frequency.
+    # 3 selections × weight 1.5 = +4.5 boost → hero (50+4.5=54.5) > help (52).
+    vocab = {"her": 200, "hello": 100, "help": 52, "hero": 50}
     history = History()
-    # Pass None as second arg (vocabulary). Pylance requires both positional args
-    engine = get_preset("default").build(history, None)
+
+    engine = AutocompleteEngine(
+        predictors=[
+            WeightedPredictor(predictor=FrequencyPredictor(vocab), weight=1.0),
+            WeightedPredictor(predictor=HistoryPredictor(history), weight=1.5),
+        ],
+        ranker=ScoreRanker(),
+        history=history,
+    )
 
     before_values = [s.value for s in engine.suggest("he")]
-    history.record("he", "hero")
-    after_values = [s.value for s in engine.suggest("he")]
+    assert "hero" in before_values, "hero must appear in results before recording"
+    before_pos = before_values.index("hero")
 
+    # 3 selections × weight 1.5 = +4.5 → hero rises above help
+    history.record("he", "hero")
+    history.record("he", "hero")
+    history.record("he", "hero")
+
+    after_values = [s.value for s in engine.suggest("he")]
     assert "hero" in after_values
-    assert after_values.index("hero") <= before_values.index("hero")
+    assert after_values.index("hero") < before_pos, (
+        f"Expected hero to rise from position {before_pos}, "
+        f"got position {after_values.index('hero')}"
+    )
