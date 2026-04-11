@@ -1,11 +1,26 @@
 [tool.poetry]
 name = "adaptive-autocomplete"
 version = "0.1.0"
-description = "Adaptive, learning-based autocompletion engine for developer productivity"
+description = "Composable autocomplete engine with learning, recency decay, and trigram typo recovery"
 authors = ["Bonnie McConnell <bonniep.mcconnell@gmail.com>"]
 readme = "README.md"
+homepage = "https://github.com/bonnie-mcconnell/adaptive-autocomplete"
+repository = "https://github.com/bonnie-mcconnell/adaptive-autocomplete"
+keywords = ["autocomplete", "search", "ranking", "nlp", "machine-learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Text Processing :: Linguistic",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
 packages = [{ include = "aac", from = "src" }]
-include = ["src/aac/data/english_frequencies.json"]
+include = ["src/aac/data/english_frequencies.json", "src/aac/py.typed"]
 
 [tool.poetry.dependencies]
 python = ">=3.10"
@@ -54,5 +69,5 @@ exclude = ["tests"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q --cov=aac --cov-report=term-missing"
+addopts = "-ra -q --cov=aac --cov-report=term-missing --cov-fail-under=85"
 testpaths = ["tests"]
