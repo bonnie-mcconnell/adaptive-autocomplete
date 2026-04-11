@@ -175,3 +175,59 @@ def test_counts_for_prefix_since_skips_non_matching_prefix() -> None:
     h.record("wo", "world", timestamp=_NOW + _HOUR)
     counts = h.counts_for_prefix_since("he", since=_NOW)
     assert counts == {}
+
+# ------------------------------------------------------------------
+# Prefix index correctness
+# ------------------------------------------------------------------
+
+def test_prefix_index_returns_same_as_full_scan() -> None:
+    """entries_for_prefix via index must match a brute-force full scan."""
+    h = History()
+    h.record("he", "hello")
+    h.record("he", "hero")
+    h.record("sh", "shell")
+    h.record("he", "help")
+
+    indexed = list(h.entries_for_prefix("he"))
+    brute = [e for e in h.entries() if e.prefix == "he"]
+
+    assert len(indexed) == len(brute)
+    assert all(a == b for a, b in zip(indexed, brute, strict=False))
+
+
+def test_counts_for_prefix_via_index() -> None:
+    """counts_for_prefix must aggregate correctly from the prefix index."""
+    h = History()
+    for _ in range(3):
+        h.record("he", "hello")
+    for _ in range(2):
+        h.record("he", "hero")
+    h.record("sh", "shell")
+
+    counts = h.counts_for_prefix("he")
+    assert counts == {"hello": 3, "hero": 2}
+    assert "sh" not in counts
+
+
+def test_prefix_index_empty_prefix_returns_empty() -> None:
+    h = History()
+    h.record("he", "hello")
+    assert list(h.entries_for_prefix("xx")) == []
+    assert h.counts_for_prefix("xx") == {}
+
+
+def test_prefix_index_consistent_after_many_records() -> None:
+    """Index stays consistent across a large number of mixed-prefix records."""
+    from datetime import datetime, timezone
+    h = History()
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    prefixes = ["a", "ab", "b", "c"]
+    for i in range(200):
+        p = prefixes[i % len(prefixes)]
+        h.record(p, f"word{i}", timestamp=ts)
+
+    for p in prefixes:
+        indexed = list(h.entries_for_prefix(p))
+        brute = [e for e in h.entries() if e.prefix == p]
+        assert indexed == brute, f"Index mismatch for prefix {p!r}"
