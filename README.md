@@ -142,7 +142,7 @@ On the surface they look like one thing: text goes in, ordered suggestions come 
 
 Separating them means each layer has a single job. A predictor can be replaced without touching the learning logic. The engine stays thin - it orchestrates, it doesn't contain scoring or ordering logic. And the layers can be tested independently, which matters when debugging why a particular word appeared where it did.
 
-The tradeoff is more code than a single entangled function. It's worth it.
+The tradeoff is more code than a single entangled function, which is worth it.
 
 ---
 
