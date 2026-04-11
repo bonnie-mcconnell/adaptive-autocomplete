@@ -10,6 +10,7 @@ from aac.predictors.frequency import FrequencyPredictor
 from aac.predictors.history import HistoryPredictor
 from aac.predictors.static_prefix import StaticPrefixPredictor
 from aac.predictors.trie import TriePrefixPredictor
+from aac.predictors.trigram import TrigramPredictor
 from tests.contracts.predictor_contract import PredictorContractTestMixin
 
 _VOCAB = ["hello", "help", "helium", "hero", "world"]
@@ -41,3 +42,7 @@ class TestTriePrefixPredictorContract(PredictorContractTestMixin):
 class TestEditDistancePredictorContract(PredictorContractTestMixin):
     def make_predictor(self) -> EditDistancePredictor:
         return EditDistancePredictor(_VOCAB, max_distance=2)
+
+class TestTrigramPredictorContract(PredictorContractTestMixin):
+    def make_predictor(self) -> TrigramPredictor:
+        return TrigramPredictor(_VOCAB, max_distance=2)
