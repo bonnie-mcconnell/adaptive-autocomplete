@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "adaptive-autocomplete"
 version = "0.1.0"
-description = "Composable autocomplete engine with learning, recency decay, and trigram typo recovery"
+description = "Autocomplete engine built from scratch: pluggable predictors, explainable ranking, and a trigram index that runs 100x faster than BK-tree at scale"
 authors = ["Bonnie McConnell <bonniep.mcconnell@gmail.com>"]
 readme = "README.md"
 homepage = "https://github.com/bonnie-mcconnell/adaptive-autocomplete"
@@ -71,3 +71,7 @@ exclude = ["tests"]
 minversion = "8.0"
 addopts = "-ra -q --cov=aac --cov-report=term-missing --cov-fail-under=85"
 testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

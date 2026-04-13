@@ -23,8 +23,8 @@ demo: install
 	@echo "── Suggestions after learning (hero rises) ─────────────────────────"
 	poetry run aac suggest he
 	@echo ""
-	@echo "── Typo recovery: 'hello' found from 'helo' (production preset) ────"
-	poetry run aac --preset production suggest helo
+	@echo "── Typo recovery: 'programing' → 'programming' (production preset) ─"
+	poetry run aac --preset production suggest programing
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 
