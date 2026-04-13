@@ -2,6 +2,12 @@
 Static data assets for the autocomplete engine.
 
 Provides access to bundled word frequency data.
+
+Data source:
+    The bundled vocabulary is derived from the wordfreq library
+    (https://github.com/rspeer/wordfreq), which is MIT licensed.
+    wordfreq aggregates frequency data from Wikipedia, OpenSubtitles,
+    and other corpora. See the wordfreq repository for full attribution.
 """
 from __future__ import annotations
 
