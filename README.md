@@ -28,7 +28,7 @@ pip install poetry && poetry install
 aac suggest he                          # completions ranked by frequency
 aac explain he                          # score breakdown per suggestion
 aac record he hero                      # record a selection - engine learns
-aac --preset production suggest hello   # typo recovery via trigram index
+aac --preset production suggest programing   # typo recovery: programing → programming
 ```
 
 Requires Python 3.10+.
@@ -194,7 +194,7 @@ Suggestions + explanations
 
 ## Performance
 
-20,000 `suggest()` calls across 10 query prefixes against the full 48,032-word vocabulary:
+20,000 `suggest()` calls across 10 query prefixes against the full 48,032-word vocabulary (wordfreq-derived, MIT licensed):
 
 | Preset | avg | p50 | p99 | Notes |
 |--------|-----|-----|-----|-------|
