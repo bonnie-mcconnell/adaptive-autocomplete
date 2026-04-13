@@ -3,17 +3,16 @@ adaptive-autocomplete: a composable ranking and suggestion engine.
 
 Quick start:
 
-    from aac.presets import get_preset
-    from aac.domain.history import History
+    from aac.presets import create_engine
 
-    engine = get_preset("production").build(History(), None)
-    engine.suggest("helo")           # typo-tolerant completions
-    engine.record_selection("helo", "hello")
-    engine.explain("helo")           # per-suggestion score breakdown
+    engine = create_engine("production")
+    engine.suggest("programing")        # → ['programming']  (typo recovered)
+    engine.record_selection("programing", "programming")
+    engine.explain("programing")        # → per-suggestion score breakdown
 
-Or compose directly:
+Or compose a custom engine directly:
 
-    from aac.engine import AutocompleteEngine
+    from aac import AutocompleteEngine
     from aac.predictors import FrequencyPredictor, HistoryPredictor
     from aac.domain.types import WeightedPredictor
     from aac.domain.history import History
@@ -31,6 +30,27 @@ Or compose directly:
 """
 from __future__ import annotations
 
+from aac.domain.history import History
+from aac.domain.types import (
+    CompletionContext,
+    Predictor,
+    ScoredSuggestion,
+    Suggestion,
+    WeightedPredictor,
+)
 from aac.engine.engine import AutocompleteEngine
+from aac.presets import create_engine, get_preset
+from aac.ranking.explanation import RankingExplanation
 
-__all__ = ["AutocompleteEngine"]
+__all__ = [
+    "AutocompleteEngine",
+    "CompletionContext",
+    "History",
+    "Predictor",
+    "RankingExplanation",
+    "ScoredSuggestion",
+    "Suggestion",
+    "WeightedPredictor",
+    "create_engine",
+    "get_preset",
+]
