@@ -193,6 +193,11 @@ class History:
         """
         Total count for a specific value across all prefixes.
 
+        O(n) in total history length. Unlike counts_for_prefix() which
+        uses the prefix index, this method scans all entries because the
+        index is keyed by prefix, not by value. For value-scoped lookups
+        at high frequency, consider building a separate value index.
+
         Parameters:
             value: Completion value to count.
 
