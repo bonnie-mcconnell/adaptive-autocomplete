@@ -91,17 +91,38 @@ class AutocompleteEngine:
             self._rankers = list(ranker)
 
         # Resolve history source of truth.
-        # If an explicit history is provided, use it.
-        # Otherwise adopt the first ranker that owns a history instance.
-        # If no ranker owns history, create a fresh one.
+        #
+        # All learning rankers must share the same History object as the engine.
+        # If histories diverge, record_selection() writes to engine history but
+        # rankers read their own instance and never see updates - silent breakage.
+        # We enforce consistency at construction time and fail fast.
+        learning_rankers = [r for r in self._rankers if isinstance(r, LearnsFromHistory)]
+
         if history is not None:
+            for ranker in learning_rankers:
+                if ranker.history is not history:
+                    raise ValueError(
+                        f"{ranker.__class__.__name__} owns a different History instance "
+                        f"than the one passed to AutocompleteEngine. "
+                        f"All learning rankers must share the engine's History. "
+                        f"Pass the same History object to both the ranker and the engine, "
+                        f"or omit the engine-level history and let the engine adopt the "
+                        f"ranker's history automatically."
+                    )
             self._history = history
         else:
             owned = next(
-                (r.history for r in self._rankers if isinstance(r, LearnsFromHistory)),
+                (r.history for r in learning_rankers),
                 None,
             )
             self._history = owned if owned is not None else History()
+            for ranker in learning_rankers:
+                if ranker.history is not self._history:
+                    raise ValueError(
+                        f"{ranker.__class__.__name__} owns a different History instance "
+                        f"than {self._rankers[0].__class__.__name__}. "
+                        f"All learning rankers must share the same History object."
+                    )
 
     # ------------------------------------------------------------------
     # Core pipeline
