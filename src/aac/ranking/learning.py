@@ -117,7 +117,17 @@ class LearningRanker(Ranker, LearnsFromHistory):
                 base_score=suggestion.score,
                 counts=counts,
             )
-            scored.append((final_score, index, suggestion))
+            # Return a new ScoredSuggestion with the boosted score so that
+            # downstream rankers and predict_scored() see the updated value.
+            boosted = ScoredSuggestion(
+                suggestion=suggestion.suggestion,
+                score=final_score,
+                explanation=suggestion.explanation,
+                trace=suggestion.trace + [
+                    f"LearningRanker boost={final_score - suggestion.score:.4f}"
+                ],
+            )
+            scored.append((final_score, index, boosted))
 
         # Stable: score desc, original index as tiebreaker
         scored.sort(key=lambda t: (-t[0], t[1]))
@@ -131,24 +141,33 @@ class LearningRanker(Ranker, LearnsFromHistory):
         prefix: str,
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[RankingExplanation]:
-        ranked = self.rank(prefix, suggestions)
+        # Build a lookup of pre-ranking (pre-boost) scores keyed by value.
+        # We must compute the boost against the pre-boost base_score, not the
+        # post-boost score from rank(). Using the post-boost score in
+        # _compute_history_boost would produce a different (larger) dominance
+        # cap than the one used during rank(), causing the explanation to
+        # be arithmetically inconsistent with the actual ranking decision.
+        pre_boost_scores = {s.suggestion.value: s.score for s in suggestions}
         counts = self.history.counts_for_prefix(prefix)
 
+        # Produce explanations in rank() order so callers can rely on ordering.
+        ranked = self.rank(prefix, suggestions)
         explanations: list[RankingExplanation] = []
 
         for s in ranked:
             count = counts.get(s.suggestion.value, 0)
+            base_score = pre_boost_scores[s.suggestion.value]
             boost = self._compute_history_boost(
                 count=count,
-                base_score=s.score,
+                base_score=base_score,
             )
 
             explanations.append(
                 RankingExplanation(
                     value=s.suggestion.value,
-                    base_score=s.score,
+                    base_score=base_score,
                     history_boost=boost,
-                    final_score=s.score + boost,
+                    final_score=base_score + boost,
                     source="learning",
                 )
             )
