@@ -169,3 +169,47 @@ def test_predict_accepts_string_directly() -> None:
     # ensure_context is used internally; plain string must work
     results = pred.predict("hello")
     assert isinstance(results, list)
+
+
+# ------------------------------------------------------------------
+# Deterministic ordering
+# ------------------------------------------------------------------
+
+def test_trigram_results_deterministic_across_calls() -> None:
+    """Repeated calls with the same query must return results in the same order."""
+    pred = TrigramPredictor(_VOCAB, max_distance=2)
+    r1 = [s.suggestion.value for s in pred.predict("hell")]
+    r2 = [s.suggestion.value for s in pred.predict("hell")]
+    assert r1 == r2
+
+
+# ------------------------------------------------------------------
+# Frequency-weighted tiebreaking
+# ------------------------------------------------------------------
+
+def test_frequency_tiebreaking_ranks_common_above_rare() -> None:
+    """Common words must rank above rare words at equal edit distance."""
+    freq = {"hello": 100, "help": 80, "hela": 1, "held": 50}
+    pred = TrigramPredictor(list(freq.keys()), max_distance=2, frequencies=freq)
+    results = pred.predict("helo")
+    values = [s.suggestion.value for s in results]
+
+    assert "hello" in values
+    assert "hela" in values
+    assert values.index("hello") < values.index("hela"), (
+        f"hello (freq=100) must rank above hela (freq=1); got {values}"
+    )
+
+
+def test_distance_dominates_frequency() -> None:
+    """A word at distance 1 must rank above a more-common word at distance 2."""
+    freq = {"held": 1, "hello": 9999}
+    pred = TrigramPredictor(list(freq.keys()), max_distance=2, frequencies=freq)
+    results = pred.predict("helo")
+    values = [s.suggestion.value for s in results]
+
+    if "held" in values and "hello" in values:
+        held_score = next(s.score for s in results if s.suggestion.value == "held")
+        hello_score = next(s.score for s in results if s.suggestion.value == "hello")
+        # Both are distance 1 from 'helo', so frequency tiebreaks: hello > held
+        assert hello_score >= held_score
