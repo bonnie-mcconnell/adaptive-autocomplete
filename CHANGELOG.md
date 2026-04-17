@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [0.1.0] - 2026
+## [0.1.0] - 2025
 
 ### Added
 
@@ -21,7 +21,19 @@ All notable changes to this project are documented here.
 - Five presets: `stateless`, `default`, `recency`, `production`, `robust`
 - CLI: `suggest`, `explain`, `record`, `debug`, `presets` subcommands with history persistence
 - 48,032-word English vocabulary (wordfreq-derived)
-- 223 tests; 99% coverage; CI on Python 3.10–3.13
+- 231 tests; 99% coverage; CI on Python 3.10–3.13
+
+### Fixed
+
+- `LearningRanker.rank()` now returns boosted `ScoredSuggestion` objects so
+  downstream rankers and `predict_scored()` see post-learning scores
+- `AutocompleteEngine.__init__` enforces shared-History identity across all
+  learning rankers; mismatched instances raise `ValueError` at construction
+- `TrigramPredictor` output is now deterministic across processes
+- `TrigramPredictor` accepts optional `frequencies` for frequency-weighted
+  tiebreaking - common words rank above rare ones at equal edit distance
+- `JsonHistoryStore.save()` is now atomic (temp-file rename)
+- Fixed memory figure in `FrequencyPredictor` docstring (16M → ~344k references)
 
 ### Design decisions recorded in README
 
