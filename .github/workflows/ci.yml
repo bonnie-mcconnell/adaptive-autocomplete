@@ -41,5 +41,8 @@ jobs:
       - name: Type check (mypy)
         run: poetry run mypy src
 
+      - name: Type check tests (mypy)
+        run: poetry run mypy tests --ignore-missing-imports --check-untyped-defs
+
       - name: Tests
         run: poetry run pytest
