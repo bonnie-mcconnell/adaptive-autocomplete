@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions/workflows/ci.yml/badge.svg)
 
-A ranking and suggestion engine that implements the full autocomplete pipeline from scratch: candidate generation, scoring, learning from user selections, and explaining every decision.
+A ranking and suggestion engine that implements the full autocomplete pipeline from scratch: candidate generation, scoring, learning from user selections, and explaining ranking decisions.
 
 The core design separates prediction from ranking. Once they're separate, each layer can be swapped, tested, and reasoned about independently. The same structure applies to any system that generates candidates, scores them, orders them, and needs to explain why.
 
@@ -16,7 +16,7 @@ cd adaptive-autocomplete
 make install
 
 make demo        # run the full pipeline end-to-end
-make test        # 223 tests across 4 Python versions
+make test        # 231 tests across 4 Python versions
 make benchmark   # latency numbers against the full 48k vocabulary
 ```
 
@@ -142,7 +142,7 @@ On the surface they look like one thing: text goes in, ordered suggestions come 
 
 Separating them means each layer has a single job. A predictor can be replaced without touching the learning logic. The engine stays thin - it orchestrates, it doesn't contain scoring or ordering logic. And the layers can be tested independently, which matters when debugging why a particular word appeared where it did.
 
-The tradeoff is more code than a single entangled function, which is worth it.
+The tradeoff is more code than a single entangled function. It's worth it because prediction and ranking can be tested in complete isolation - something that was impossible when they were the same thing.
 
 ---
 
@@ -221,7 +221,7 @@ The trigram index takes a different approach: precompute which words share chara
 
 **Presets are a leaky abstraction.** They configure internal wiring - which predictors, which rankers, which weights - but the line between "what's a preset" and "what's a configuration parameter" was never cleanly resolved. Starting over, I'd remove presets entirely and let callers pass predictor and ranker stacks directly. The Python API already supports this; presets are just convenience wrappers.
 
-**`FrequencyPredictor` memory usage should be a documented constraint, not an implementation detail.** Pre-sorting the prefix index holds around 336k string references for a 48k-word vocabulary. For a server process this is fine; for an embedded context it should be explicit.
+**`FrequencyPredictor` memory usage should be a documented constraint, not an implementation detail.** Pre-sorting the prefix index holds around 344k string references for a 48k-word vocabulary. For a server process this is fine; for an embedded context it should be explicit.
 
 **TrigramPredictor has a minimum prefix length constraint.** Below 4 characters, trigrams provide poor discrimination and the shortlist degenerates. The right fix is a hybrid: trigram matching above 4 characters, BK-tree on a curated short-word list below it. The architecture supports composing both predictors in the same engine; the preset wiring just hasn't been done.
 
@@ -241,7 +241,7 @@ The test suite covers correctness properties rather than just happy paths:
 - **Schema migration**: v1 count-only history files load under v2 with epoch timestamps, treated as maximally stale by decay rankers
 - **Predictor contract**: all six predictor implementations verified against a shared invariant suite
 
-223 tests. CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
+231 tests. CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
