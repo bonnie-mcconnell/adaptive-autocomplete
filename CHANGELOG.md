@@ -21,7 +21,7 @@ All notable changes to this project are documented here.
 - Five presets: `stateless`, `default`, `recency`, `production`, `robust`
 - CLI: `suggest`, `explain`, `record`, `debug`, `presets` subcommands with history persistence
 - 48,032-word English vocabulary (wordfreq-derived)
-- 231 tests; 99% coverage; CI on Python 3.10–3.13
+- 230 tests; 99% coverage; CI on Python 3.10–3.13
 
 ### Fixed
 
