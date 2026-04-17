@@ -49,10 +49,17 @@ def test_no_results_for_unknown_prefix(predictor: FrequencyPredictor) -> None:
 
 def test_confidence_is_relative_to_max_frequency(predictor: FrequencyPredictor) -> None:
     results = predictor.predict(CompletionContext("he"))
-    by_value = {r.suggestion.value: r.explanation.confidence for r in results}
-    # hello has the highest frequency in the 'he' group (10), world is max overall (20)
-    assert by_value["hello"] == 10 / 20  # 0.5
-    assert by_value["helium"] == 1 / 20  # 0.05
+    by_value = {r.suggestion.value: r for r in results}
+
+    # FrequencyPredictor always populates explanation - assert non-None
+    # before accessing .confidence so the type checker knows it is safe.
+    assert by_value["hello"].explanation is not None
+    assert by_value["helium"].explanation is not None
+
+    # Confidence is relative to global max frequency (world=20), not the
+    # prefix-scoped max. hello (10/20=0.5), helium (1/20=0.05).
+    assert by_value["hello"].explanation.confidence == 10 / 20
+    assert by_value["helium"].explanation.confidence == 1 / 20
 
 
 def test_insertion_order_does_not_affect_result_set() -> None:

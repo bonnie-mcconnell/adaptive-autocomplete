@@ -108,12 +108,19 @@ def test_closer_matches_score_higher() -> None:
 
 
 def test_score_formula_matches_distance() -> None:
-    """score == 1.0 / (1 + distance) for every result."""
-    pred = TrigramPredictor(_VOCAB, max_distance=2)
+    """
+    Without frequencies, score == 1.0 / (1 + distance) for every result.
+
+    When frequencies are provided, a small bonus is added for tiebreaking,
+    so this invariant only holds for the no-frequencies case.
+    """
+    pred = TrigramPredictor(_VOCAB, max_distance=2)  # no frequencies
     for s in pred.predict("hello"):
         dist = levenshtein("hello", s.suggestion.value)
         expected = 1.0 / (1 + dist)
-        assert s.score == pytest.approx(expected)
+        assert s.score == pytest.approx(expected), (
+            f"{s.suggestion.value!r}: expected {expected:.4f}, got {s.score:.4f}"
+        )
 
 
 # ------------------------------------------------------------------

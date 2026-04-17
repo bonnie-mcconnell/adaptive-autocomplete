@@ -7,6 +7,10 @@ and mutation safety.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+import pytest
+
 from aac.domain.history import History
 from aac.domain.types import (
     CompletionContext,
@@ -111,3 +115,57 @@ def test_engine_does_not_mutate_predictor_state() -> None:
     first = engine.predict_scored(CompletionContext("he"))
     second = engine.predict_scored(CompletionContext("he"))
     assert first == second
+
+# ------------------------------------------------------------------
+# Ranker-adds-suggestions invariant (RuntimeError path)
+# ------------------------------------------------------------------
+
+def test_engine_raises_if_ranker_adds_suggestions() -> None:
+    """
+    The engine must raise RuntimeError if a ranker adds suggestions.
+
+    This is the most critical invariant in the engine: rankers may only
+    reorder and rescore, never add or remove. The check uses RuntimeError
+    (not assert, which is disabled under -O) so it fires in production.
+    """
+    from aac.domain.types import ScoredSuggestion, Suggestion
+    from aac.ranking.base import Ranker
+    from aac.ranking.explanation import RankingExplanation
+
+    class _AddingRanker(Ranker):
+        """Deliberately adds a suggestion - must trigger invariant check."""
+        def rank(self, prefix: str, suggestions: Sequence[ScoredSuggestion]) -> list[ScoredSuggestion]:
+            return list(suggestions) + [ScoredSuggestion(Suggestion("injected"), score=999.0)]
+
+        def explain(self, prefix: str, suggestions: Sequence[ScoredSuggestion]) -> list[RankingExplanation]:
+            return []
+
+    engine = AutocompleteEngine(
+        predictors=[StaticPrefixPredictor(["hello", "help"])],
+        ranker=_AddingRanker(),
+    )
+
+    with pytest.raises(RuntimeError, match="modified the suggestion set"):
+        engine.suggest("he")
+
+
+def test_engine_raises_if_ranker_removes_suggestions() -> None:
+    """The engine must raise RuntimeError if a ranker removes suggestions."""
+    from aac.ranking.base import Ranker
+    from aac.ranking.explanation import RankingExplanation
+
+    class _RemovingRanker(Ranker):
+        """Deliberately removes a suggestion - must trigger invariant check."""
+        def rank(self, prefix: str, suggestions: Sequence[ScoredSuggestion]) -> list[ScoredSuggestion]:
+            return list(suggestions)[:-1]  # drop the last one
+
+        def explain(self, prefix: str, suggestions: Sequence[ScoredSuggestion]) -> list[RankingExplanation]:
+            return []
+
+    engine = AutocompleteEngine(
+        predictors=[StaticPrefixPredictor(["hello", "help", "helium"])],
+        ranker=_RemovingRanker(),
+    )
+
+    with pytest.raises(RuntimeError, match="modified the suggestion set"):
+        engine.suggest("he")
