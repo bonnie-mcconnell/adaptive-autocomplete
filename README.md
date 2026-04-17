@@ -16,7 +16,7 @@ cd adaptive-autocomplete
 make install
 
 make demo        # run the full pipeline end-to-end
-make test        # 231 tests across 4 Python versions
+make test        # 230 tests across 4 Python versions
 make benchmark   # latency numbers against the full 48k vocabulary
 ```
 
@@ -241,7 +241,7 @@ The test suite covers correctness properties rather than just happy paths:
 - **Schema migration**: v1 count-only history files load under v2 with epoch timestamps, treated as maximally stale by decay rankers
 - **Predictor contract**: all six predictor implementations verified against a shared invariant suite
 
-231 tests. CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
+230 tests. CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
