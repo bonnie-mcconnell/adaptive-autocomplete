@@ -241,6 +241,7 @@ def _production_engine(
             predictor=TrigramPredictor(
                 vocabulary=frequencies.keys(),
                 max_distance=2,
+                frequencies=frequencies,
             ),
             weight=0.4,  # intentionally weak fallback signal
         ),
@@ -334,8 +335,10 @@ def create_engine(
     vocabulary: Mapping[str, int] | None = None,
 ) -> AutocompleteEngine:
     """
-    Backwards-compatible factory.
-    Prefer build_engine(...) in the app layer.
+    Build an engine from a named preset with the bundled vocabulary.
+
+    For a custom vocabulary or an existing History instance, use
+    get_preset(name).build(history, vocabulary) directly.
     """
     return get_preset(preset).build(None, vocabulary)
 

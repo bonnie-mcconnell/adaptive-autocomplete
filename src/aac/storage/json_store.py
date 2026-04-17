@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,8 +45,8 @@ class JsonHistoryStore(HistoryStore):
     Design notes:
         - Domain objects remain I/O-free; all serialisation lives here.
         - Malformed entries are skipped, not fatal.
-        - Atomic write (write to temp file, rename) is not implemented
-          but would be the correct production approach.
+        - save() uses an atomic temp-file rename so readers always see
+          a complete file, never a partial write.
     """
 
     def __init__(self, path: Path) -> None:
@@ -70,8 +72,10 @@ class JsonHistoryStore(HistoryStore):
 
     def save(self, history: History) -> None:
         """
-        Persist all history entries to disk, including timestamps.
+        Atomically persist all history entries to disk.
 
+        Writes to a temporary file in the same directory, then renames it
+        over the target path. On POSIX systems rename() is atomic.
         Creates parent directories if they do not exist.
         """
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,10 +94,26 @@ class JsonHistoryStore(HistoryStore):
             "entries": entries,
         }
 
-        self._path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True),
-            encoding="utf-8",
+        content = json.dumps(payload, indent=2, sort_keys=True)
+
+        # Write to a temp file in the same directory so the rename is
+        # guaranteed to be on the same filesystem (cross-device rename fails).
+        fd, tmp_path_str = tempfile.mkstemp(
+            dir=self._path.parent,
+            prefix=".aac_history_",
+            suffix=".tmp",
         )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            # Atomic replace: old file visible until new file is complete.
+            Path(tmp_path_str).replace(self._path)
+        except Exception:
+            try:
+                os.unlink(tmp_path_str)
+            except OSError:
+                pass
+            raise
 
 
 # ------------------------------------------------------------------
