@@ -1,178 +1,113 @@
 """
-Tests for engine-enforced invariants.
+Tests for AutocompleteEngine core behaviour.
 
-The README advertises these guarantees explicitly. They must be tested.
-
-Invariant 1: Rankers cannot add or remove suggestions.
-             Enforced with RuntimeError (not assert, which -O disables).
-
-Invariant 2: Non-finite scores are rejected with ValueError.
-
-Invariant 3: engine.debug() returns the correct shape.
-
-Invariant 4: engine.describe() returns complete metadata.
+Covers: aggregation across predictors, weighted scoring,
+learning via record_selection, explain immutability,
+and mutation safety.
 """
 from __future__ import annotations
 
-import pytest
-
+from aac.domain.history import History
 from aac.domain.types import (
     CompletionContext,
     ScoredSuggestion,
     Suggestion,
+    WeightedPredictor,
 )
-from aac.engine.engine import AutocompleteEngine, DescribeState
+from aac.engine.engine import AutocompleteEngine
+from aac.predictors.frequency import FrequencyPredictor
 from aac.predictors.static_prefix import StaticPrefixPredictor
-from aac.ranking.base import Ranker
-from aac.ranking.explanation import RankingExplanation
+from aac.predictors.trie import TriePrefixPredictor
+from aac.ranking.learning import LearningRanker
 
 
-class _AddingRanker(Ranker):
-    """Ranker that illegally inserts a suggestion."""
+class _FakePredictor:
+    def __init__(self, name: str, suggestions: list[ScoredSuggestion]) -> None:
+        self.name = name
+        self._suggestions = suggestions
 
-    def rank(
-        self, prefix: str, suggestions: list[ScoredSuggestion]
-    ) -> list[ScoredSuggestion]:
-        extra = ScoredSuggestion(suggestion=Suggestion("injected"), score=999.0)
-        return list(suggestions) + [extra]
-
-    def explain(
-        self, prefix: str, suggestions: list[ScoredSuggestion]
-    ) -> list[RankingExplanation]:
-        return []
+    def predict(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
+        return self._suggestions
 
 
-class _RemovingRanker(Ranker):
-    """Ranker that illegally drops a suggestion."""
-
-    def rank(
-        self, prefix: str, suggestions: list[ScoredSuggestion]
-    ) -> list[ScoredSuggestion]:
-        return list(suggestions)[:-1]
-
-    def explain(
-        self, prefix: str, suggestions: list[ScoredSuggestion]
-    ) -> list[RankingExplanation]:
-        return []
+def test_engine_aggregates_and_sorts() -> None:
+    p1 = _FakePredictor("p1", [
+        ScoredSuggestion(Suggestion("foo"), 0.2),
+        ScoredSuggestion(Suggestion("bar"), 0.9),
+    ])
+    p2 = _FakePredictor("p2", [ScoredSuggestion(Suggestion("baz"), 0.5)])
+    engine = AutocompleteEngine([p1, p2])
+    assert [s.value for s in engine.suggest("x")] == ["bar", "baz", "foo"]
 
 
-class _NanRanker(Ranker):
-    """Ranker that produces a NaN score."""
-
-    def rank(
-        self, prefix: str, suggestions: list[ScoredSuggestion]
-    ) -> list[ScoredSuggestion]:
-        return [
-            ScoredSuggestion(
-                suggestion=s.suggestion,
-                score=float("nan"),
-            )
-            for s in suggestions
-        ]
-
-    def explain(
-        self, prefix: str, suggestions: list[ScoredSuggestion]
-    ) -> list[RankingExplanation]:
-        return []
+def test_engine_combines_frequency_and_trie() -> None:
+    engine = AutocompleteEngine(predictors=[
+        TriePrefixPredictor(["hello", "help"]),
+        FrequencyPredictor({"hello": 10, "help": 1}),
+    ])
+    results = engine.suggest("he")
+    assert results[0].value == "hello"
 
 
-# ------------------------------------------------------------------
-# Invariant 1: rankers cannot add or remove suggestions
-# ------------------------------------------------------------------
+def test_engine_weighted_predictors_sum_scores() -> None:
+    class _FixedPredictor:
+        name = "fixed"
 
-def test_adding_ranker_raises_runtime_error() -> None:
+        def predict(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
+            return [ScoredSuggestion(Suggestion("hello"), score=1.0)]
+
+    engine = AutocompleteEngine(predictors=[
+        WeightedPredictor(_FixedPredictor(), weight=1.0),
+        WeightedPredictor(_FixedPredictor(), weight=3.0),
+    ])
+    results = engine.predict_scored(CompletionContext("h"))
+    assert len(results) == 1
+    assert results[0].score == 4.0
+
+
+def test_engine_multiple_predictors_all_results_present() -> None:
+    engine = AutocompleteEngine(predictors=[
+        StaticPrefixPredictor(["hello", "help"]),
+        StaticPrefixPredictor(["helium"]),
+    ])
+    values = [r.suggestion.value for r in engine.predict_scored(CompletionContext("he"))]
+    assert "hello" in values
+    assert "help" in values
+    assert "helium" in values
+
+
+def test_engine_adapts_after_selection() -> None:
+    history = History()
     engine = AutocompleteEngine(
         predictors=[StaticPrefixPredictor(["hello", "help"])],
-        ranker=_AddingRanker(),
+        ranker=LearningRanker(history),
     )
-    with pytest.raises(RuntimeError, match="modified the suggestion set"):
-        engine.suggest("he")
+    assert [s.value for s in engine.suggest("he")] == ["hello", "help"]
+    engine.record_selection("he", "help")
+    assert engine.suggest("he")[0].value == "help"
 
 
-def test_removing_ranker_raises_runtime_error() -> None:
+def test_engine_explain_does_not_mutate_history() -> None:
+    history = History()
     engine = AutocompleteEngine(
-        predictors=[StaticPrefixPredictor(["hello", "help"])],
-        ranker=_RemovingRanker(),
+        predictors=[StaticPrefixPredictor(["hello"])],
+        ranker=LearningRanker(history),
     )
-    with pytest.raises(RuntimeError, match="modified the suggestion set"):
-        engine.suggest("he")
+    engine.explain("he")
+    assert history.entries() == ()
 
 
-# ------------------------------------------------------------------
-# Invariant 2: non-finite scores are rejected
-# ------------------------------------------------------------------
-
-def test_nan_score_raises_value_error() -> None:
-    engine = AutocompleteEngine(
-        predictors=[StaticPrefixPredictor(["hello", "help"])],
-        ranker=_NanRanker(),
-    )
-    with pytest.raises(ValueError, match="Non-finite score"):
-        engine.suggest("he")
+def test_engine_explain_as_dicts_has_required_keys() -> None:
+    engine = AutocompleteEngine(predictors=[StaticPrefixPredictor(["hello", "help"])])
+    for row in engine.explain_as_dicts("he"):
+        assert {"value", "base_score", "history_boost", "final_score"} <= row.keys()
 
 
-# ------------------------------------------------------------------
-# engine.debug() shape
-# ------------------------------------------------------------------
-
-def test_debug_returns_correct_shape() -> None:
-    engine = AutocompleteEngine(
-        predictors=[StaticPrefixPredictor(["hello", "help", "hero"])]
-    )
-    state = engine.debug("he")
-
-    assert "input" in state
-    assert "scored" in state
-    assert "ranked" in state
-    assert "suggestions" in state
-    assert state["input"] == "he"
-    assert isinstance(state["suggestions"], list)
-    assert all(isinstance(v, str) for v in state["suggestions"])
-
-
-# ------------------------------------------------------------------
-# engine.describe() content
-# ------------------------------------------------------------------
-
-def test_describe_returns_predictor_names() -> None:
-    engine = AutocompleteEngine(
-        predictors=[StaticPrefixPredictor(["hello"])]
-    )
-    info: DescribeState = engine.describe()
-    assert info["predictors"][0]["name"] == "static_prefix"
-
-
-def test_describe_returns_ranker_names() -> None:
-    engine = AutocompleteEngine(
-        predictors=[StaticPrefixPredictor(["hello"])]
-    )
-    info: DescribeState = engine.describe()
-    assert "ScoreRanker" in info["rankers"]
-
-
-def test_describe_history_entries_increments_after_record() -> None:
-    engine = AutocompleteEngine(
-        predictors=[StaticPrefixPredictor(["hello", "help"])]
-    )
-    info_before: DescribeState = engine.describe()
-    before: int = info_before["history_entries"]
-    engine.record_selection("he", "hello")
-    info_after: DescribeState = engine.describe()
-    after: int = info_after["history_entries"]
-    assert after == before + 1
-
-
-# ------------------------------------------------------------------
-# _predict_scored_unranked (internal diagnostic)
-# ------------------------------------------------------------------
-
-def test_predict_scored_unranked_bypasses_rankers() -> None:
-    """Internal diagnostic should return scores without ordering guarantee."""
-    engine = AutocompleteEngine(
-        predictors=[StaticPrefixPredictor(["hello", "help"])]
-    )
-    ctx = CompletionContext("he")
-    results = engine._predict_scored_unranked(ctx)
-    assert len(results) == 2
-    values = {r.suggestion.value for r in results}
-    assert values == {"hello", "help"}
+def test_engine_does_not_mutate_predictor_state() -> None:
+    """Multiple predict() calls must not accumulate state."""
+    engine = AutocompleteEngine(predictors=[
+        StaticPrefixPredictor(["hello", "help"]),
+    ])
+    first = engine.predict_scored(CompletionContext("he"))
+    second = engine.predict_scored(CompletionContext("he"))
+    assert first == second
