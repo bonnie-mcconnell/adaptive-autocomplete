@@ -47,7 +47,7 @@ class FrequencyPredictor(Predictor):
           if case-insensitive matching is required.
         - Memory: O(sum of word lengths × avg words per prefix). For a
           48k-word vocabulary with avg length 7, this is approximately
-          16M string references - around 128MB in CPython. Acceptable
+          ~344k string references - around 2.8MB in CPython. Acceptable
           for a server process; for embedded use, limit vocabulary size.
     """
 

@@ -51,8 +51,9 @@ Gravano et al. (2001). "Approximate String Joins in a Database
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from aac.domain.types import (
     CompletionContext,
@@ -145,6 +146,9 @@ class TrigramIndex:
             if dist <= max_distance:
                 results.append((word, dist))
 
+        # Sort by (distance asc, word asc) for deterministic output.
+        # Without this, equal-distance results reflect hash-randomised dict order.
+        results.sort(key=lambda t: (t[1], t[0]))
         return results
 
 
@@ -163,8 +167,13 @@ class TrigramPredictor(Predictor):
     For short-prefix typo recovery, use EditDistancePredictor on a
     curated small vocabulary.
 
-    Score: 1.0 / (1 + distance), matching EditDistancePredictor's scale
-    so the two are interchangeable in weighted predictor stacks.
+    Scoring:
+        Primary: 1.0 / (1 + distance) - closer matches score higher.
+        Secondary (when frequencies provided): a log-scaled frequency bonus
+        capped at 10% of the minimum distance score breaks ties between
+        equal-distance matches. Distance always dominates; frequency only
+        separates words at the same edit distance. Score matches
+        EditDistancePredictor's scale so the two are interchangeable.
     """
 
     name = "trigram"
@@ -175,10 +184,23 @@ class TrigramPredictor(Predictor):
         *,
         max_distance: int = 2,
         base_score: float = 1.0,
+        frequencies: Mapping[str, int] | None = None,
     ) -> None:
         self._index = TrigramIndex(vocabulary)
         self._max_distance = max_distance
         self._base_score = base_score
+        # Pre-compute log-scaled frequency bonus for tiebreaking within equal-
+        # distance groups. Capped at 10% of the minimum distance score so a
+        # common word at distance 2 never outranks a rare word at distance 1.
+        if frequencies:
+            max_freq = max(frequencies.values()) or 1
+            cap = (base_score / (1 + max_distance)) * 0.1
+            self._freq_bonus: dict[str, float] = {
+                w: cap * (math.log1p(f) / math.log1p(max_freq))
+                for w, f in frequencies.items()
+            }
+        else:
+            self._freq_bonus = {}
 
     def predict(self, ctx: CompletionContext | str) -> list[ScoredSuggestion]:
         ctx = ensure_context(ctx)
@@ -192,7 +214,9 @@ class TrigramPredictor(Predictor):
         for word, distance in self._index.candidates(
             prefix, max_distance=self._max_distance
         ):
-            score = self._base_score / (1 + distance)
+            distance_score = self._base_score / (1 + distance)
+            freq_bonus = self._freq_bonus.get(word, 0.0)
+            score = distance_score + freq_bonus
             confidence = max(0.0, 1.0 - (distance / (self._max_distance + 1)))
 
             results.append(
@@ -208,4 +232,6 @@ class TrigramPredictor(Predictor):
                 )
             )
 
+        # Re-sort by descending score so frequency tiebreaking takes effect.
+        results.sort(key=lambda s: s.score, reverse=True)
         return results
