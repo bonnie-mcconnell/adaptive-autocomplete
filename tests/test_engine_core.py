@@ -111,3 +111,62 @@ def test_engine_does_not_mutate_predictor_state() -> None:
     first = engine.predict_scored(CompletionContext("he"))
     second = engine.predict_scored(CompletionContext("he"))
     assert first == second
+
+# ---------------------------------------------------------------------------
+# record_selection() key correctness
+# ---------------------------------------------------------------------------
+
+class TestRecordSelectionKeyCorrectness:
+    """
+    record_selection() must record under ctx.prefix(), not ctx.text.
+
+    If the key is wrong, counts_for_prefix() never returns the recorded
+    selection and the learning system silently does nothing.
+    """
+
+    def test_learning_visible_after_record_selection(self) -> None:
+        from aac.domain.history import History
+        from aac.engine.engine import AutocompleteEngine
+        from aac.predictors.frequency import FrequencyPredictor
+        from aac.domain.types import WeightedPredictor
+
+        vocab = {"hello": 100, "help": 80, "hero": 1}
+        history = History()
+        engine = AutocompleteEngine(
+            predictors=[WeightedPredictor(FrequencyPredictor(vocab), weight=1.0)],
+            history=history,
+        )
+
+        # Without any selection, hero should be last (lowest frequency)
+        before = [s.value for s in engine.suggest("he")]
+        assert before.index("hero") > before.index("hello")
+
+        # Record hero many times
+        for _ in range(20):
+            engine.record_selection("he", "hero")
+
+        # hero should now be in history under the prefix "he"
+        counts = history.counts_for_prefix("he")
+        assert counts.get("hero", 0) == 20, (
+            f"Expected 20 recordings under prefix 'he', got: {counts}"
+        )
+
+    def test_record_selection_normalises_case(self) -> None:
+        """record_selection('He', value) must record under 'he' not 'He'."""
+        from aac.domain.history import History
+        from aac.engine.engine import AutocompleteEngine
+        from aac.predictors.frequency import FrequencyPredictor
+        from aac.domain.types import WeightedPredictor
+
+        vocab = {"hello": 100, "hero": 1}
+        history = History()
+        engine = AutocompleteEngine(
+            predictors=[WeightedPredictor(FrequencyPredictor(vocab), weight=1.0)],
+            history=history,
+        )
+
+        engine.record_selection("He", "hero")
+
+        # Should be stored under "he" (normalised prefix), not "He"
+        assert history.counts_for_prefix("he").get("hero", 0) == 1
+        assert history.counts_for_prefix("He").get("hero", 0) == 0

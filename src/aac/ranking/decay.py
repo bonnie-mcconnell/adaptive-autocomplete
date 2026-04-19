@@ -97,22 +97,36 @@ class DecayRanker(Ranker, LearnsFromHistory):
         if not decayed:
             return list(suggestions)
 
-        ranked: list[ScoredSuggestion] = []
+        scored: list[tuple[float, int, ScoredSuggestion]] = []
 
-        for s in suggestions:
+        for index, s in enumerate(suggestions):
             boost = decayed.get(s.suggestion.value, 0.0) * self._weight
+            final_score = s.score + boost
 
-            ranked.append(
+            # Add a trace entry when boost is non-zero so debug() shows
+            # DecayRanker's contribution alongside LearningRanker's.
+            new_trace = s.trace
+            if boost > 0.0:
+                new_trace = s.trace + (
+                    f"DecayRanker boost={boost:.4f}",
+                )
+
+            scored.append((
+                final_score,
+                index,  # stable tiebreaker: preserve original order on equal scores
                 ScoredSuggestion(
                     suggestion=s.suggestion,
-                    score=s.score + boost,
+                    score=final_score,
                     explanation=s.explanation,
-                    trace=s.trace,
-                )
-            )
+                    trace=new_trace,
+                ),
+            ))
 
-        ranked.sort(key=lambda s: s.score, reverse=True)
-        return ranked
+        # Stable sort: score desc, original index as tiebreaker.
+        # Matches LearningRanker's sort contract so composing both rankers
+        # produces deterministic output regardless of insertion order.
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        return [s for _, _, s in scored]
 
     def explain(
         self,

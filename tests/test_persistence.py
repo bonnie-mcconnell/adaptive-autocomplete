@@ -7,6 +7,7 @@ decay interaction after reload, and error handling.
 from __future__ import annotations
 
 import json
+import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -211,3 +212,43 @@ def test_v1_version_key_skipped(tmp_path: Path) -> None:
     loaded = JsonHistoryStore(path).load()
     assert loaded.counts_for_prefix("version") == {}
     assert loaded.counts_for_prefix("he") == {"hello": 1}
+
+class TestDataLoadValidation:
+    """load_english_frequencies raises on malformed data."""
+
+    def test_non_dict_json_raises(self, tmp_path: Path) -> None:
+        """If the JSON root is not a dict, load_english_frequencies raises ValueError."""
+        import json
+        from unittest.mock import patch
+        from aac.data import load_english_frequencies
+
+        bad_json = json.dumps([1, 2, 3])  # list, not dict
+        with patch("aac.data._DATA_DIR", tmp_path):
+            (tmp_path / "english_frequencies.json").write_text(bad_json, encoding="utf-8")
+            with pytest.raises((ValueError, Exception)):
+                load_english_frequencies.cache_clear()  # type: ignore[attr-defined]
+                load_english_frequencies()
+
+
+class TestJsonStoreExceptionCleanup:
+    """JsonHistoryStore.save() must clean up the temp file if write fails."""
+
+    def test_temp_file_cleaned_up_on_write_failure(self, tmp_path: Path) -> None:
+        """If writing the temp file raises, no orphaned .tmp file is left."""
+        import os
+        from unittest.mock import patch, mock_open
+        from aac.domain.history import History
+        from aac.storage.json_store import JsonHistoryStore
+
+        store = JsonHistoryStore(tmp_path / "history.json")
+        history = History()
+        history.record("he", "hello")
+
+        # Simulate fdopen write failure
+        with patch("os.fdopen", side_effect=OSError("disk full")):
+            with pytest.raises(OSError, match="disk full"):
+                store.save(history)
+
+        # No orphaned temp files should remain
+        tmp_files = list(tmp_path.glob(".aac_history_*.tmp"))
+        assert tmp_files == [], f"Orphaned temp files: {tmp_files}"

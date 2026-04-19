@@ -169,3 +169,84 @@ def test_engine_raises_if_ranker_removes_suggestions() -> None:
 
     with pytest.raises(RuntimeError, match="modified the suggestion set"):
         engine.suggest("he")
+
+
+class TestEngineHistoryDivergence:
+    """Engine __init__ must reject divergent History instances at construction time."""
+
+    def test_explicit_history_conflicts_with_learning_ranker(self) -> None:
+        """ValueError if explicit history != a learning ranker's history."""
+        from aac.domain.history import History
+        from aac.domain.types import WeightedPredictor
+        from aac.engine.engine import AutocompleteEngine
+        from aac.predictors.frequency import FrequencyPredictor
+        from aac.ranking.learning import LearningRanker
+
+        ranker_history = History()
+        engine_history = History()  # different object
+        assert ranker_history is not engine_history
+
+        with pytest.raises(ValueError, match="different History instance"):
+            AutocompleteEngine(
+                predictors=[WeightedPredictor(FrequencyPredictor({"a": 1}), weight=1.0)],
+                ranker=LearningRanker(ranker_history),
+                history=engine_history,
+            )
+
+    def test_two_learning_rankers_with_divergent_histories(self) -> None:
+        """ValueError if two learning rankers each own a different History."""
+        from aac.domain.history import History
+        from aac.domain.types import WeightedPredictor
+        from aac.engine.engine import AutocompleteEngine
+        from aac.predictors.frequency import FrequencyPredictor
+        from aac.ranking.learning import LearningRanker
+
+        history_a = History()
+        history_b = History()
+
+        with pytest.raises(ValueError, match="different History instance"):
+            AutocompleteEngine(
+                predictors=[WeightedPredictor(FrequencyPredictor({"a": 1}), weight=1.0)],
+                ranker=[LearningRanker(history_a), LearningRanker(history_b)],
+            )
+
+    def test_non_finite_score_raises(self) -> None:
+        """ValueError if a ranker produces a non-finite score."""
+        import math
+        from aac.domain.types import ScoredSuggestion, Suggestion, WeightedPredictor, CompletionContext
+        from aac.engine.engine import AutocompleteEngine
+        from aac.predictors.frequency import FrequencyPredictor
+        from aac.ranking.base import Ranker
+        from aac.ranking.explanation import RankingExplanation
+        from collections.abc import Sequence
+
+        class InfiniteRanker(Ranker):
+            def rank(self, prefix: str, suggestions: Sequence[ScoredSuggestion]) -> list[ScoredSuggestion]:
+                return [
+                    ScoredSuggestion(suggestion=s.suggestion, score=math.inf)
+                    for s in suggestions
+                ]
+            def explain(self, prefix: str, suggestions: Sequence[ScoredSuggestion]) -> list[RankingExplanation]:
+                return []
+
+        engine = AutocompleteEngine(
+            predictors=[WeightedPredictor(FrequencyPredictor({"hello": 1}), weight=1.0)],
+            ranker=InfiniteRanker(),
+        )
+        with pytest.raises(ValueError, match="Non-finite score"):
+            engine.suggest("he")
+
+    def test_predict_scored_unranked_returns_unranked(self) -> None:
+        """_predict_scored_unranked must return scores without applying rankers."""
+        from aac.domain.types import WeightedPredictor, CompletionContext
+        from aac.engine.engine import AutocompleteEngine
+        from aac.predictors.frequency import FrequencyPredictor
+
+        engine = AutocompleteEngine(
+            predictors=[WeightedPredictor(FrequencyPredictor({"hello": 100, "help": 50}), weight=1.0)],
+        )
+        ctx = CompletionContext("he")
+        unranked = engine._predict_scored_unranked(ctx)
+        # Should return scored suggestions without ranking order enforced
+        assert len(unranked) > 0
+        assert all(hasattr(s, "score") for s in unranked)

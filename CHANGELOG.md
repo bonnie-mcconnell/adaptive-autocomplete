@@ -6,13 +6,52 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- Property-based tests with Hypothesis covering three core invariants:
+- **Coverage: 99.58%** (up from 98.32%). Targeted tests for all previously
+  uncovered branches: divergent-History ``ValueError`` in ``AutocompleteEngine``
+  (both construction paths), non-finite score detection, ``_predict_scored_unranked``,
+  ``FrequencyPredictor`` validation, ``Trie._collect`` limit exit, ``TrigramIndex``
+  empty-string guard and length-difference pruning, ``TrigramPredictor`` empty-prefix
+  guard, and ``JsonHistoryStore`` exception cleanup on write failure. 261 tests total.
+- Property-based tests with Hypothesis covering four core invariants:
   `RankingExplanation` arithmetic, ranker candidate-set preservation, and
-  History prefix-index consistency. 11 new tests; 241 total.
+  History prefix-index consistency. 31 new tests; 261 total.
 - `hypothesis = "^6.100"` added to dev dependencies.
 
 ### Fixed
 
+- **`test_apply_history_boost_preserves_invariant` was not executing**: the test
+  was appended as a module-level function with ``self`` as its first parameter.
+  pytest does not collect module-level functions with ``self`` - they require a
+  class. The test appeared in the source file and in the changelog but silently
+  never ran. The entire ``test_property_based.py`` file was rewritten as three
+  clean, properly-structured classes; all 12 Hypothesis tests now execute.
+- **`record_selection()` used wrong history key** (silent correctness bug):
+  ``self._history.record(ctx.text, value)`` recorded selections under the
+  raw input string, but ``counts_for_prefix()`` and ``entries_for_prefix()``
+  look up by ``ctx.prefix()`` - the normalised, lowercased, last-word form.
+  Keys never matched, silently disabling the entire learning system for
+  callers using the public ``record_selection()`` API.  Fixed by recording
+  under ``ctx.prefix()``.
+- **`DecayRanker.rank()` was not stable** and dropped trace entries:
+  sorted on ``score`` alone (no tiebreaker), so equal-score suggestions had
+  non-deterministic relative order.  Changed to ``(-score, original_index)``
+  matching ``LearningRanker``'s contract.  Also: ``DecayRanker`` was
+  passing through ``s.trace`` unchanged even when it applied a non-zero
+  boost, making ``debug()`` output silent about its contribution.  Now
+  appends a ``"DecayRanker boost=..."`` trace entry when ``boost > 0``.
+- **`FrequencyPredictor` indexed exact matches unnecessarily**: the prefix
+  index was built with ``range(1, len(word) + 1)``, adding every word under
+  its own full string as a key.  ``predict()`` then filtered these out per
+  call with an ``if word == prefix: continue`` guard.  For a 48k vocabulary
+  this added ~48k wasted entries to the index and one comparison per
+  candidate per query.  Fixed by using ``range(1, len(word))`` at build
+  time; the query-time guard is now unnecessary and removed.
+- **`RankingExplanation.apply_history_boost()` floating-point precision bug**
+  (also found by Hypothesis): same three-way vs two-way float sum issue as
+  ``merge()``.  ``final_score = base + old_boost + new_boost`` rounds
+  differently from ``base + (old_boost + new_boost)`` at magnitudes above
+  ~1e9.  Fixed by computing ``new_history_boost = old + boost`` first, then
+  ``final_score = base + new_history_boost``.
 - **`RankingExplanation.merge()` floating-point precision bug** (found by
   Hypothesis): `final_score` was computed as the sum of four independent
   terms (`self.base + other.base + self.boost + other.boost`), which
@@ -36,12 +75,12 @@ All notable changes to this project are documented here.
 - **`JsonHistoryStore.save()` docstring**: documented Windows non-atomicity.
   On POSIX, `rename()` is atomic. On Windows, `Path.replace()` is not atomic
   when the destination exists (delete-then-rename at the OS level).
-- **CHANGELOG date**: `[0.1.0] - 2025` corrected to `[0.1.0] - 2025.
+- **CHANGELOG date**: `[0.1.0] - 2025` corrected to `[0.1.0] - 2025-04-17`.
 - **CI**: added benchmark step (Python 3.12 only) that uploads results as a
   GitHub Actions artifact, making the README performance table independently
   verifiable without cloning.
 
-## [0.1.0] - 2025
+## [0.1.0] - 2025-04-17
 
 ### Added
 

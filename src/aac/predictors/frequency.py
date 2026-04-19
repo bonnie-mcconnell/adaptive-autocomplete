@@ -78,9 +78,14 @@ class FrequencyPredictor(Predictor):
         # frequency. Built once at construction; O(1) slice at query time.
         # Sorting here costs O(|bucket| log |bucket|) per prefix, but that
         # work is amortised over all queries against that prefix.
+        # Index prefixes of length 1..len(word)-1.
+        # Exact matches (prefix == word) are excluded here, not filtered in
+        # predict(). Filtering at query time costs one comparison per candidate
+        # per call. Excluding at build time costs nothing at query time and
+        # keeps the index smaller: ~48k fewer entries for a 48k-word vocabulary.
         raw: dict[str, list[str]] = defaultdict(list)
         for word in frequencies:
-            for length in range(1, len(word) + 1):
+            for length in range(1, len(word)):   # excludes len(word) → no exact match
                 raw[word[:length]].append(word)
 
         self._index: dict[str, list[str]] = {
@@ -97,12 +102,9 @@ class FrequencyPredictor(Predictor):
 
         results: list[ScoredSuggestion] = []
 
+        # No exact-match guard needed here: the prefix index excludes
+        # words under their own full string (built with range(1, len(word))).
         for word in self._index.get(prefix, []):
-            if word == prefix:
-                # Exact match: the user has already typed this word.
-                # Completing it to itself adds no information.
-                continue
-
             count = self._frequencies[word]
             score = float(count)
             confidence = count / self._max_freq

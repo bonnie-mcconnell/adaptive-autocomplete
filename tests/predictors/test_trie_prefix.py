@@ -34,3 +34,15 @@ def test_trie_prefix_explanation_source() -> None:
     assert explanation is not None
     assert explanation.source == "trie_prefix"
     assert explanation.score == 1.0
+
+
+class TestTrieCollectLimit:
+    """Trie._collect must stop adding results once the limit is reached."""
+
+    def test_find_prefix_respects_limit(self) -> None:
+        from aac.predictors.trie import Trie
+        # Build a trie with many words sharing the same prefix
+        words = [f"test{i}" for i in range(20)]
+        trie = Trie(words)
+        results = trie.find_prefix("test", limit=3)
+        assert len(results) == 3

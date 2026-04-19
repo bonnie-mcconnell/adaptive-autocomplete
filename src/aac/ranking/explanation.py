@@ -114,12 +114,20 @@ class RankingExplanation:
     ) -> RankingExplanation:
         """
         Apply a learning/history adjustment.
+
+        Note on arithmetic: ``new_history_boost`` is computed first, then
+        ``final_score = base_score + new_history_boost``.  This matches
+        the invariant check in ``__post_init__`` and avoids the same
+        floating-point precision issue fixed in ``merge()``: summing three
+        independent terms (base + old_boost + new_boost) can round
+        differently from the two-term sum the invariant check uses.
         """
+        new_history_boost = self.history_boost + boost
         return RankingExplanation(
             value=self.value,
             base_score=self.base_score,
-            history_boost=self.history_boost + boost,
-            final_score=self.base_score + self.history_boost + boost,
+            history_boost=new_history_boost,
+            final_score=self.base_score + new_history_boost,
             source=self.source,
             base_components=dict(self.base_components),
             history_components={

@@ -220,3 +220,34 @@ def test_distance_dominates_frequency() -> None:
         hello_score = next(s.score for s in results if s.suggestion.value == "hello")
         # Both are distance 1 from 'helo', so frequency tiebreaks: hello > held
         assert hello_score >= held_score
+
+
+class TestTrigramEdgeCases:
+    """Trigram predictor and index edge cases."""
+
+    def test_empty_string_skipped_in_index(self) -> None:
+        """Empty strings in the vocabulary must not be indexed."""
+        from aac.predictors.trigram import TrigramIndex
+        index = TrigramIndex(["hello", "", "help"])
+        # Should build without error; empty string produces no trigrams
+        results = index.candidates("hello", max_distance=1)
+        values = [w for w, _ in results]
+        assert "" not in values
+
+    def test_length_difference_prunes_candidates(self) -> None:
+        """Words far longer than the query must be pruned before Levenshtein."""
+        from aac.predictors.trigram import TrigramIndex
+        # "hi" vs "hippopotamus" - length difference (11) >> max_distance (2)
+        index = TrigramIndex(["hi", "hippopotamus", "him", "hit"])
+        results = index.candidates("hi" + "x" * 4, max_distance=2)
+        values = [w for w, _ in results]
+        assert "hippopotamus" not in values
+
+    def test_empty_prefix_returns_empty(self) -> None:
+        """TrigramPredictor must return [] for an empty prefix."""
+        from aac.predictors.trigram import TrigramPredictor
+        predictor = TrigramPredictor(["hello", "help"])
+        # CompletionContext with no prefix
+        from aac.domain.types import CompletionContext
+        results = predictor.predict(CompletionContext(text=""))
+        assert results == []

@@ -80,3 +80,40 @@ def test_rejects_empty_frequencies() -> None:
 def test_rejects_all_zero_frequencies() -> None:
     with pytest.raises(ValueError, match="positive"):
         FrequencyPredictor({"hello": 0, "help": 0})
+
+class TestFrequencyPredictorIndexCorrectness:
+    """FrequencyPredictor index must exclude exact matches at build time."""
+
+    def test_exact_match_not_in_index(self) -> None:
+        """A word must not appear in results when the prefix equals the word exactly."""
+        from aac.predictors.frequency import FrequencyPredictor
+        vocab = {"hello": 100, "help": 80}
+        predictor = FrequencyPredictor(vocab)
+        results = [s.value for s in predictor.predict("hello")]
+        assert "hello" not in results
+
+    def test_index_does_not_contain_exact_match_key(self) -> None:
+        """The internal index must not store any word under its own full string."""
+        from aac.predictors.frequency import FrequencyPredictor
+        vocab = {"hi": 10, "hello": 100}
+        predictor = FrequencyPredictor(vocab)
+        # If the index contains "hi" as a key, exact-match filtering was done
+        # at query time (old behaviour) rather than at build time (correct).
+        # The key "hi" should not exist because range(1, len("hi")) = range(1,2) = [1]
+        # which only generates prefix "h", not "hi".
+        assert "hi" not in predictor._index
+        assert "hello" not in predictor._index
+
+
+class TestFrequencyPredictorValidation:
+    """FrequencyPredictor must reject invalid construction arguments."""
+
+    def test_max_results_less_than_one_raises(self) -> None:
+        from aac.predictors.frequency import FrequencyPredictor
+        with pytest.raises(ValueError, match="max_results"):
+            FrequencyPredictor({"hello": 1}, max_results=0)
+
+    def test_empty_frequencies_raises(self) -> None:
+        from aac.predictors.frequency import FrequencyPredictor
+        with pytest.raises(ValueError, match="frequencies must not be empty"):
+            FrequencyPredictor({})

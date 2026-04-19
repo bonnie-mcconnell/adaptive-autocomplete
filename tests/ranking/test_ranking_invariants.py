@@ -153,3 +153,86 @@ def test_learning_ranker_explain_uses_pre_boost_base_score() -> None:
     assert hello_exp.final_score == 15.0, (
         f"final must be 15.0, got {hello_exp.final_score}"
     )
+
+
+# ---------------------------------------------------------------------------
+# DecayRanker stability and trace
+# ---------------------------------------------------------------------------
+
+class TestDecayRankerStabilityAndTrace:
+    """
+    DecayRanker must produce stable output and record trace contributions.
+    """
+
+    def test_equal_score_order_is_stable(self) -> None:
+        """Equal-score suggestions must preserve original insertion order."""
+        from datetime import datetime, timezone
+        from aac.domain.history import History
+        from aac.domain.types import ScoredSuggestion, Suggestion
+        from aac.ranking.decay import DecayFunction, DecayRanker
+
+        history = History()  # no history → all boosts are 0 → all scores equal
+        ranker = DecayRanker(
+            history=history,
+            decay=DecayFunction(half_life_seconds=3600),
+            weight=1.0,
+            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+
+        suggestions = [
+            ScoredSuggestion(suggestion=Suggestion(value=v), score=1.0)
+            for v in ["alpha", "beta", "gamma", "delta"]
+        ]
+
+        result = ranker.rank("prefix", suggestions)
+        assert [s.value for s in result] == ["alpha", "beta", "gamma", "delta"]
+
+    def test_trace_entry_added_when_boost_nonzero(self) -> None:
+        """DecayRanker must add a trace entry when it applies a non-zero boost."""
+        from datetime import datetime, timezone
+        from aac.domain.history import History
+        from aac.domain.types import ScoredSuggestion, Suggestion
+        from aac.ranking.decay import DecayFunction, DecayRanker
+
+        now = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        history = History()
+        history.record("he", "hero", timestamp=now)
+
+        ranker = DecayRanker(
+            history=history,
+            decay=DecayFunction(half_life_seconds=3600),
+            weight=2.0,
+            now=now,
+        )
+
+        suggestions = [
+            ScoredSuggestion(suggestion=Suggestion(value="hero"), score=1.0),
+        ]
+
+        result = ranker.rank("he", suggestions)
+        assert len(result) == 1
+        trace = result[0].trace
+        assert any("DecayRanker" in entry for entry in trace), (
+            f"Expected DecayRanker trace entry, got: {trace}"
+        )
+
+    def test_trace_not_added_when_boost_zero(self) -> None:
+        """DecayRanker must not add a trace entry when boost is zero."""
+        from datetime import datetime, timezone
+        from aac.domain.history import History
+        from aac.domain.types import ScoredSuggestion, Suggestion
+        from aac.ranking.decay import DecayFunction, DecayRanker
+
+        history = History()
+        ranker = DecayRanker(
+            history=history,
+            decay=DecayFunction(half_life_seconds=3600),
+            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+
+        suggestions = [
+            ScoredSuggestion(suggestion=Suggestion(value="hello"), score=1.0),
+        ]
+
+        result = ranker.rank("he", suggestions)
+        assert len(result[0].trace) == 0

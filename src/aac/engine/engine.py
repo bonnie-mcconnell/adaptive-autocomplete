@@ -308,9 +308,16 @@ class AutocompleteEngine:
         Note: HistoryPredictor reads from the shared History and does not
         implement a record hook - the engine's direct write is sufficient.
         Adding a hook to HistoryPredictor would record each selection twice.
+
+        Key invariant:
+            History is keyed by ``ctx.prefix()``, not ``ctx.text``.
+            Lookups in ``counts_for_prefix()`` and ``entries_for_prefix()``
+            use the normalised prefix as the key. Recording under ``ctx.text``
+            (the raw input string) would produce keys that never match lookups,
+            silently disabling the learning signal.
         """
         ctx = CompletionContext(text)
-        self._history.record(ctx.text, value)
+        self._history.record(ctx.prefix(), value)
 
         for weighted in self._predictors:
             record = getattr(weighted.predictor, "record", None)
