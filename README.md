@@ -2,9 +2,9 @@
 
 ![CI](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions/workflows/ci.yml/badge.svg)
 
-A ranking and suggestion engine that implements the full autocomplete pipeline from scratch: candidate generation, scoring, learning from user selections, and explaining ranking decisions.
+Autocomplete engine built from scratch in Python - candidate generation, frequency ranking, typo recovery, learning from user selections, and per-suggestion score explanations.
 
-The core design separates prediction from ranking. Once they're separate, each layer can be swapped, tested, and reasoned about independently. The same structure applies to any system that generates candidates, scores them, orders them, and needs to explain why.
+I built it to understand what ranking infrastructure actually looks like underneath the ML layer: how candidates get generated, scored, merged across predictors, reordered by rankers, and explained back to the caller. The first version was a single function. It became this when I tried to write a test for the learning behaviour and discovered there was no seam to inject a controlled history.
 
 ---
 
@@ -16,7 +16,7 @@ cd adaptive-autocomplete
 make install
 
 make demo        # run the full pipeline end-to-end
-make test        # 230 tests across 4 Python versions
+make test        # 261 tests across 4 Python versions
 make benchmark   # latency numbers against the full 48k vocabulary
 ```
 
@@ -184,7 +184,7 @@ Suggestions + explanations
 
 **Rankers cannot add or remove candidates.** They can only reorder and rescore. Checked at runtime with a `RuntimeError` naming the offending ranker - not an `assert`, which Python disables under `-O`.
 
-**Explanations must reconcile with scores.** `RankingExplanation` enforces `final_score == base_score + history_boost` in `__post_init__`. If any code produces an inconsistent explanation, it fails at construction, not silently downstream.
+**Explanations must reconcile with scores.** `RankingExplanation` enforces `final_score == base_score + history_boost` in `__post_init__`. If any code produces an inconsistent explanation, it fails at construction, not silently downstream. `merge()` and `apply_history_boost()` compute intermediate sums before passing to the constructor to avoid floating-point precision divergence from multi-term addition - a bug Hypothesis found and that example-based tests missed.
 
 **History has one owner.** The engine holds the single `History` instance. Rankers can read it; only the engine writes to it. This makes the audit trail clean and prevents predictors from recording selections twice.
 
@@ -240,12 +240,12 @@ The test suite covers correctness properties rather than just happy paths:
 - **Persistence round-trip**: timestamps survive serialisation and deserialisation with sub-second accuracy
 - **Schema migration**: v1 count-only history files load under v2 with epoch timestamps, treated as maximally stale by decay rankers
 - **Predictor contract**: all six predictor implementations verified against a shared invariant suite
-- **Property-based tests (Hypothesis)**: three core invariants verified across thousands of generated inputs:
-  - `RankingExplanation` arithmetic holds for all finite non-negative score combinations, including after `merge()`
+- **Property-based tests (Hypothesis)**: four core invariants verified across thousands of generated inputs - including two floating-point precision bugs found by Hypothesis that example-based tests missed:
+  - `RankingExplanation` arithmetic (`final_score == base_score + history_boost`) holds for all finite non-negative score combinations, including after `merge()` and `apply_history_boost()`
   - `LearningRanker` and `DecayRanker` never add or remove candidates, across arbitrary suggestion lists and history states
   - History prefix index always agrees with brute-force full scan, regardless of insertion order or prefix distribution
 
-241 tests. CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
+261 tests. CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
