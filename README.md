@@ -194,7 +194,7 @@ Suggestions + explanations
 
 ## Performance
 
-20,000 `suggest()` calls across 10 query prefixes against the full 48,032-word vocabulary (wordfreq-derived, MIT licensed):
+20,000 `suggest()` calls across 10 query prefixes against the full 48,032-word vocabulary (wordfreq-derived, MIT licensed). Benchmark output from the latest CI run is available as a downloadable artifact in [GitHub Actions](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions) - click the most recent passing run and download `benchmark-results`. Run `make benchmark` to reproduce locally.
 
 | Preset | avg | p50 | p99 | Notes |
 |--------|-----|-----|-----|-------|
@@ -240,8 +240,12 @@ The test suite covers correctness properties rather than just happy paths:
 - **Persistence round-trip**: timestamps survive serialisation and deserialisation with sub-second accuracy
 - **Schema migration**: v1 count-only history files load under v2 with epoch timestamps, treated as maximally stale by decay rankers
 - **Predictor contract**: all six predictor implementations verified against a shared invariant suite
+- **Property-based tests (Hypothesis)**: three core invariants verified across thousands of generated inputs:
+  - `RankingExplanation` arithmetic holds for all finite non-negative score combinations, including after `merge()`
+  - `LearningRanker` and `DecayRanker` never add or remove candidates, across arbitrary suggestion lists and history states
+  - History prefix index always agrees with brute-force full scan, regardless of insertion order or prefix distribution
 
-230 tests. CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
+241 tests. CI runs on Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
 ---
 
