@@ -126,9 +126,9 @@ class TestRecordSelectionKeyCorrectness:
 
     def test_learning_visible_after_record_selection(self) -> None:
         from aac.domain.history import History
+        from aac.domain.types import WeightedPredictor
         from aac.engine.engine import AutocompleteEngine
         from aac.predictors.frequency import FrequencyPredictor
-        from aac.domain.types import WeightedPredictor
 
         vocab = {"hello": 100, "help": 80, "hero": 1}
         history = History()
@@ -154,9 +154,9 @@ class TestRecordSelectionKeyCorrectness:
     def test_record_selection_normalises_case(self) -> None:
         """record_selection('He', value) must record under 'he' not 'He'."""
         from aac.domain.history import History
+        from aac.domain.types import WeightedPredictor
         from aac.engine.engine import AutocompleteEngine
         from aac.predictors.frequency import FrequencyPredictor
-        from aac.domain.types import WeightedPredictor
 
         vocab = {"hello": 100, "hero": 1}
         history = History()

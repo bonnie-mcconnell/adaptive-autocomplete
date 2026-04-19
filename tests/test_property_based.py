@@ -351,7 +351,7 @@ class TestHistoryIndexConsistency:
         brute = [e for e in history.entries() if e.prefix == query_prefix]
 
         assert len(indexed) == len(brute)
-        assert all(a == b for a, b in zip(indexed, brute))
+        assert all(a == b for a, b in zip(indexed, brute, strict=False))
 
     @given(
         events=st.lists(

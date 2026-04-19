@@ -7,9 +7,10 @@ decay interaction after reload, and error handling.
 from __future__ import annotations
 
 import json
-import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 from aac.domain.history import History
 from aac.storage.json_store import JsonHistoryStore
@@ -220,6 +221,7 @@ class TestDataLoadValidation:
         """If the JSON root is not a dict, load_english_frequencies raises ValueError."""
         import json
         from unittest.mock import patch
+
         from aac.data import load_english_frequencies
 
         bad_json = json.dumps([1, 2, 3])  # list, not dict
@@ -235,8 +237,8 @@ class TestJsonStoreExceptionCleanup:
 
     def test_temp_file_cleaned_up_on_write_failure(self, tmp_path: Path) -> None:
         """If writing the temp file raises, no orphaned .tmp file is left."""
-        import os
-        from unittest.mock import patch, mock_open
+        from unittest.mock import patch
+
         from aac.domain.history import History
         from aac.storage.json_store import JsonHistoryStore
 

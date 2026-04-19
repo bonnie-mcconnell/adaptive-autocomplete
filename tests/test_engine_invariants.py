@@ -213,12 +213,15 @@ class TestEngineHistoryDivergence:
     def test_non_finite_score_raises(self) -> None:
         """ValueError if a ranker produces a non-finite score."""
         import math
-        from aac.domain.types import ScoredSuggestion, Suggestion, WeightedPredictor, CompletionContext
+
+        from aac.domain.types import (
+            ScoredSuggestion,
+            WeightedPredictor,
+        )
         from aac.engine.engine import AutocompleteEngine
         from aac.predictors.frequency import FrequencyPredictor
         from aac.ranking.base import Ranker
         from aac.ranking.explanation import RankingExplanation
-        from collections.abc import Sequence
 
         class InfiniteRanker(Ranker):
             def rank(self, prefix: str, suggestions: Sequence[ScoredSuggestion]) -> list[ScoredSuggestion]:
@@ -238,7 +241,7 @@ class TestEngineHistoryDivergence:
 
     def test_predict_scored_unranked_returns_unranked(self) -> None:
         """_predict_scored_unranked must return scores without applying rankers."""
-        from aac.domain.types import WeightedPredictor, CompletionContext
+        from aac.domain.types import CompletionContext, WeightedPredictor
         from aac.engine.engine import AutocompleteEngine
         from aac.predictors.frequency import FrequencyPredictor
 

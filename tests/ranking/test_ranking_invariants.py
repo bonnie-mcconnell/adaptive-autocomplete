@@ -167,6 +167,7 @@ class TestDecayRankerStabilityAndTrace:
     def test_equal_score_order_is_stable(self) -> None:
         """Equal-score suggestions must preserve original insertion order."""
         from datetime import datetime, timezone
+
         from aac.domain.history import History
         from aac.domain.types import ScoredSuggestion, Suggestion
         from aac.ranking.decay import DecayFunction, DecayRanker
@@ -190,6 +191,7 @@ class TestDecayRankerStabilityAndTrace:
     def test_trace_entry_added_when_boost_nonzero(self) -> None:
         """DecayRanker must add a trace entry when it applies a non-zero boost."""
         from datetime import datetime, timezone
+
         from aac.domain.history import History
         from aac.domain.types import ScoredSuggestion, Suggestion
         from aac.ranking.decay import DecayFunction, DecayRanker
@@ -219,6 +221,7 @@ class TestDecayRankerStabilityAndTrace:
     def test_trace_not_added_when_boost_zero(self) -> None:
         """DecayRanker must not add a trace entry when boost is zero."""
         from datetime import datetime, timezone
+
         from aac.domain.history import History
         from aac.domain.types import ScoredSuggestion, Suggestion
         from aac.ranking.decay import DecayFunction, DecayRanker
