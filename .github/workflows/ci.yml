@@ -43,3 +43,15 @@ jobs:
 
       - name: Tests
         run: poetry run pytest
+
+      - name: Benchmark (Python 3.12 only)
+        if: matrix.python-version == '3.12'
+        run: poetry run python -m aac.benchmarks.benchmark_engine | tee benchmark_results.txt
+
+      - name: Upload benchmark results
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark_results.txt
+          retention-days: 90
