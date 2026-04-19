@@ -34,9 +34,8 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from aac.domain.history import History, HistoryEntry
+from aac.domain.history import History
 from aac.domain.types import (
-    CompletionContext,
     ScoredSuggestion,
     Suggestion,
 )
@@ -343,7 +342,7 @@ class TestHistoryPrefixIndexConsistency:
         brute = [e for e in history.entries() if e.prefix == query_prefix]
 
         assert len(indexed) == len(brute)
-        assert all(a == b for a, b in zip(indexed, brute))
+        assert all(a == b for a, b in zip(indexed, brute, strict=False))
 
     @given(
         events=st.lists(
