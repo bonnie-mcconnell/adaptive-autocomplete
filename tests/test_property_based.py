@@ -6,7 +6,7 @@ but cannot be exhaustively covered by example-based tests alone.  The
 three invariants under test are:
 
 1. RankingExplanation: ``final_score == base_score + history_boost``
-   for all finite, non-negative score combinations — including edge cases
+   for all finite, non-negative score combinations - including edge cases
    like zero boost, zero base, and very large values.
 
 2. Ranker candidate-set preservation: the engine's ``_apply_ranking``
@@ -23,7 +23,7 @@ Why Hypothesis here?
     (``__post_init__`` for explanations, ``RuntimeError`` for rankers,
     and the index is relied on throughout the codebase).  Hypothesis
     generates thousands of inputs including degenerate cases that manual
-    test authorship rarely reaches — zero values, NaN-adjacent floats,
+    test authorship rarely reaches - zero values, NaN-adjacent floats,
     unicode prefixes, interleaved insertions across many prefixes.
 """
 from __future__ import annotations
