@@ -50,10 +50,10 @@ class StaticPrefixPredictor(Predictor):
                         confidence=1.0,
                         source=self.name,
                     ),
-                    trace=[
+                    trace=(
                         f"prefix='{prefix}'",
                         f"matched='{word}'",
-                    ],
+                    ),
                 )
             )
 

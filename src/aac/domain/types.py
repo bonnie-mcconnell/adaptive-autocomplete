@@ -60,12 +60,18 @@ class Suggestion:
 class ScoredSuggestion:
     """
     A suggestion with an associated score.
+
+    ``trace`` is an immutable tuple of diagnostic strings recording which
+    predictors and rankers contributed to the score.  Using ``tuple``
+    rather than ``list`` makes the immutability guarantee of
+    ``frozen=True`` complete: callers cannot mutate the trace without
+    constructing a new ``ScoredSuggestion``.
     """
 
     suggestion: Suggestion
     score: float
     explanation: PredictorExplanation | None = None
-    trace: list[str] = field(default_factory=list)
+    trace: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def value(self) -> str:

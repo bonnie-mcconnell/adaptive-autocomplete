@@ -52,6 +52,13 @@ class RankingExplanation:
         Merge another explanation into this one.
 
         Intended for combining contributions from multiple rankers.
+
+        Note on arithmetic: ``final_score`` is computed as
+        ``(self.base_score + other.base_score) + (self.history_boost + other.history_boost)``
+        rather than summing all four terms independently.  This matches the
+        invariant check in ``__post_init__`` (``base + boost``) and avoids
+        floating-point rounding errors where a four-way sum evaluates
+        differently from a two-way sum of the same values.
         """
         if self.value != other.value:
             raise ValueError("Cannot merge explanations for different values")
@@ -60,16 +67,14 @@ class RankingExplanation:
         # 'source' intentionally preserved from the first explanation.
         # Component maps capture multi-ranker contributions.
 
+        merged_base = self.base_score + other.base_score
+        merged_boost = self.history_boost + other.history_boost
+
         return RankingExplanation(
             value=self.value,
-            base_score=self.base_score + other.base_score,
-            history_boost=self.history_boost + other.history_boost,
-            final_score=(
-                self.base_score
-                + other.base_score
-                + self.history_boost
-                + other.history_boost
-            ),
+            base_score=merged_base,
+            history_boost=merged_boost,
+            final_score=merged_base + merged_boost,
             source=self.source,
             base_components={
                 **self.base_components,

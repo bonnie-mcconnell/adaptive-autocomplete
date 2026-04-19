@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Property-based tests with Hypothesis covering three core invariants:
+  `RankingExplanation` arithmetic, ranker candidate-set preservation, and
+  History prefix-index consistency. 11 new tests; 241 total.
+- `hypothesis = "^6.100"` added to dev dependencies.
+
+### Fixed
+
+- **`RankingExplanation.merge()` floating-point precision bug** (found by
+  Hypothesis): `final_score` was computed as the sum of four independent
+  terms (`self.base + other.base + self.boost + other.boost`), which
+  rounds differently from the two-term sum used by `__post_init__`
+  (`base + boost`). Fixed by computing `merged_base` and `merged_boost`
+  separately, then deriving `final_score = merged_base + merged_boost`.
+  This matches the invariant check and eliminates the precision divergence.
+- **`ScoredSuggestion.trace`**: changed from `list[str]` to `tuple[str, ...]`.
+  `frozen=True` prevents reassignment of the field but not mutation of a
+  list's contents. Using `tuple` makes the immutability guarantee complete.
+  All internal construction sites updated to use tuple literals and `+ (item,)`
+  concatenation.
+- **`_DEFAULT_VOCABULARY` in `presets.py`**: was loaded at import time,
+  triggering a 717 KB JSON parse as a side effect of `import aac.presets`.
+  Changed to a lazy loader `_get_default_vocabulary()` backed by
+  `lru_cache`; the JSON is parsed once on first actual use.
+- **`History` docstring**: "Safe to share across predictors and rankers"
+  was ambiguous about write safety. Added explicit thread-safety section:
+  reads are safe concurrently; `record()` is not thread-safe and requires
+  external locking for multi-threaded writers.
+- **`JsonHistoryStore.save()` docstring**: documented Windows non-atomicity.
+  On POSIX, `rename()` is atomic. On Windows, `Path.replace()` is not atomic
+  when the destination exists (delete-then-rename at the OS level).
+- **CHANGELOG date**: `[0.1.0] - 2025` corrected to `[0.1.0] - 2025.
+- **CI**: added benchmark step (Python 3.12 only) that uploads results as a
+  GitHub Actions artifact, making the README performance table independently
+  verifiable without cloning.
+
 ## [0.1.0] - 2025
 
 ### Added

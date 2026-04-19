@@ -46,12 +46,16 @@ class EnginePreset:
 # ---------------------------------------------------------------------
 # Default vocabulary
 #
-# Loaded once at import time and shared across all preset builders.
-# Using the cached load function means the JSON file is read exactly
-# once regardless of how many presets are constructed.
+# Loaded lazily on first use rather than at import time.  Importing
+# ``aac.presets`` would otherwise trigger a 717 KB JSON parse as a
+# side effect, which is surprising for a library module.  The lru_cache
+# on load_english_frequencies() ensures the file is read exactly once
+# regardless of how many preset builders call _get_default_vocabulary().
 # ---------------------------------------------------------------------
 
-_DEFAULT_VOCABULARY: Mapping[str, int] = load_english_frequencies()
+def _get_default_vocabulary() -> Mapping[str, int]:
+    """Return the bundled vocabulary, loading it on first call."""
+    return load_english_frequencies()
 
 
 # ---------------------------------------------------------------------
@@ -64,7 +68,7 @@ def _stateless_engine(
     vocabulary: Mapping[str, int] | None = None,
 ) -> AutocompleteEngine:
     """Pure frequency ranking. No learning, no history, fully reproducible."""
-    frequencies = vocabulary or _DEFAULT_VOCABULARY
+    frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
         WeightedPredictor(
@@ -93,7 +97,7 @@ def _default_engine(
     explain() output.
     """
     history = history or History()
-    frequencies = vocabulary or _DEFAULT_VOCABULARY
+    frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
         WeightedPredictor(
@@ -126,7 +130,7 @@ def _recency_boosted_engine(
     History boost appears separately in explain() output.
     """
     history = history or History()
-    frequencies = vocabulary or _DEFAULT_VOCABULARY
+    frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
         WeightedPredictor(
@@ -168,7 +172,7 @@ def _robust_engine(
     for typo recovery at full vocabulary scale.
     """
     history = history or History()
-    frequencies = vocabulary or _DEFAULT_VOCABULARY
+    frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
         WeightedPredictor(
@@ -226,7 +230,7 @@ def _production_engine(
     recovery is required.
     """
     history = history or History()
-    frequencies = vocabulary or _DEFAULT_VOCABULARY
+    frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
         WeightedPredictor(

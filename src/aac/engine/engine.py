@@ -153,7 +153,7 @@ class AutocompleteEngine:
                         suggestion=scored.suggestion,
                         score=weighted_score,
                         explanation=scored.explanation,
-                        trace=[trace_entry],
+                        trace=(trace_entry,),
                     )
                 else:
                     prev = aggregated[key]
@@ -161,7 +161,7 @@ class AutocompleteEngine:
                         suggestion=prev.suggestion,
                         score=prev.score + weighted_score,
                         explanation=prev.explanation,
-                        trace=prev.trace + [trace_entry],
+                        trace=prev.trace + (trace_entry,),
                     )
 
         return list(aggregated.values())

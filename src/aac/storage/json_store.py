@@ -75,7 +75,16 @@ class JsonHistoryStore(HistoryStore):
         Atomically persist all history entries to disk.
 
         Writes to a temporary file in the same directory, then renames it
-        over the target path. On POSIX systems rename() is atomic.
+        over the target path.  On POSIX systems ``rename()`` is atomic: a
+        reader either sees the old file or the new one, never a partial
+        write.  On Windows, ``Path.replace()`` is **not** atomic when the
+        destination already exists (it is implemented as a delete-then-rename
+        at the OS level), so a crash between the two steps could leave no
+        file at the target path.  In practice this window is tiny and the
+        loader handles a missing file gracefully by returning an empty
+        ``History``.  For Windows deployments where atomicity is critical,
+        wrap ``save()`` in a higher-level retry or use a database-backed
+        store instead.
         Creates parent directories if they do not exist.
         """
         self._path.parent.mkdir(parents=True, exist_ok=True)

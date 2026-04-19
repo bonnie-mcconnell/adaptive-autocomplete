@@ -42,8 +42,18 @@ class History:
     Design guarantees:
         - Entries are immutable once recorded
         - No deletion or in-place mutation
-        - Safe to share across predictors and rankers
+        - Safe to share across predictors and rankers for *reading*
         - Persistence-friendly via explicit snapshot export
+
+    Thread safety:
+        This class is **not thread-safe**.  Concurrent ``record()`` calls
+        from multiple threads will produce interleaved writes with no
+        consistency guarantee.  The docstring note "safe to share across
+        predictors and rankers" refers to read access only: because entries
+        are never mutated or deleted, concurrent reads are safe.  For
+        multi-threaded write access, protect ``record()`` externally with a
+        ``threading.Lock``, or use one ``History`` instance per thread and
+        merge snapshots periodically.
 
     This class intentionally separates:
         - In-memory domain representation (HistoryEntry)

@@ -123,9 +123,9 @@ class LearningRanker(Ranker, LearnsFromHistory):
                 suggestion=suggestion.suggestion,
                 score=final_score,
                 explanation=suggestion.explanation,
-                trace=suggestion.trace + [
-                    f"LearningRanker boost={final_score - suggestion.score:.4f}"
-                ],
+                trace=suggestion.trace + (
+                    f"LearningRanker boost={final_score - suggestion.score:.4f}",
+                ),
             )
             scored.append((final_score, index, boosted))
 
