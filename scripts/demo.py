@@ -1,0 +1,121 @@
+"""
+End-to-end demonstration of adaptive-autocomplete.
+
+Shows four things:
+  1. Frequency-ranked suggestions from the full 48k vocabulary
+  2. Per-suggestion score explanations
+  3. Learning: a word selected 5 times rises from last to first
+  4. Typo recovery: 'programing' -> 'programming'
+
+The learning demo uses a small controlled vocabulary so the movement
+is visible after just five selections. With a full 48k vocabulary,
+the frequency scores (up to 20,000) mean meaningful movement requires
+hundreds of selections — which is realistic for a real application but
+unhelpful in a two-second demo.
+"""
+from __future__ import annotations
+
+from aac.domain.history import History
+from aac.domain.types import WeightedPredictor
+from aac.engine.engine import AutocompleteEngine
+from aac.predictors.frequency import FrequencyPredictor
+from aac.predictors.history import HistoryPredictor
+from aac.presets import create_engine
+from aac.ranking.decay import DecayFunction, DecayRanker
+from aac.ranking.score import ScoreRanker
+
+_W = 72  # display width
+
+
+def _header(title: str) -> None:
+    print(f"\n── {title} {'─' * max(0, _W - len(title) - 4)}")
+
+
+def _section_1_frequency() -> None:
+    _header("Frequency-ranked suggestions for 'he' (production preset, 48k vocab)")
+    engine = create_engine("production")
+    for s in engine.suggest("he"):
+        print(f"  {s.value}")
+
+
+def _section_2_explain() -> None:
+    _header("Score breakdown for 'he'")
+    engine = create_engine("default")
+    for exp in engine.explain("he"):
+        pct = exp.final_score / engine.explain("he")[0].final_score * 100
+        print(
+            f"  {exp.value:<14s}"
+            f"  score={exp.final_score:8.2f} ({pct:5.1f}%)"
+            f"  freq={exp.base_score:8.2f}"
+            f"  recency={exp.history_boost:+.2f}"
+        )
+
+
+def _section_3_learning() -> None:
+    _header("Learning: 'her' selected 5 times rises from last to first")
+
+    # Small vocabulary so frequency scores are proportional to selection boosts.
+    # With the full 48k vocab, frequency scores reach 20,000 and require hundreds
+    # of selections before ranking changes visibly — correct behaviour for a real
+    # app, but not useful in a demo.
+    vocab = {
+        "help": 500,
+        "hello": 400,
+        "health": 300,
+        "heard": 200,
+        "hero": 100,
+        "her": 50,
+    }
+    history = History()
+    engine = AutocompleteEngine(
+        predictors=[
+            WeightedPredictor(FrequencyPredictor(vocab), 1.0),
+            WeightedPredictor(HistoryPredictor(history), 1.0),
+        ],
+        ranker=[
+            ScoreRanker(),
+            # weight=100 so 5 selections produce 500 boost, enough to
+            # move 'her' (freq=50) past 'help' (freq=500).
+            DecayRanker(history, DecayFunction(half_life_seconds=3600), weight=100.0),
+        ],
+        history=history,
+    )
+
+    before = [s.value for s in engine.suggest("he")]
+    print(f"  before:              {before}")
+
+    for _ in range(5):
+        engine.record_selection("he", "her")
+
+    after = [s.value for s in engine.suggest("he")]
+    print(f"  after 5× 'her':      {after}")
+
+    print()
+    for exp in engine.explain("he"):
+        boost_bar = "▓" * int(exp.history_boost / 50)
+        print(
+            f"  {exp.value:<8s}"
+            f"  freq={exp.base_score:5.0f}"
+            f"  boost={exp.history_boost:5.0f}"
+            f"  final={exp.final_score:5.0f}"
+            f"  {boost_bar}"
+        )
+
+
+def _section_4_typo() -> None:
+    _header("Typo recovery: 'programing' → 'programming' (production preset)")
+    engine = create_engine("production")
+    results = [s.value for s in engine.suggest("programing")]
+    print(f"  aac suggest programing  →  {results[:5]}")
+    assert "programming" in results, "programming not found — typo recovery failed"
+
+
+if __name__ == "__main__":
+    print("adaptive-autocomplete demo")
+    print("=" * _W)
+    _section_1_frequency()
+    _section_2_explain()
+    _section_3_learning()
+    _section_4_typo()
+    print(f"\n{'─' * _W}")
+    print("Done. Run 'make benchmark' for latency numbers.")

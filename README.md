@@ -96,40 +96,21 @@ held
 hear
 hey
 
-$ aac record he hero
-Recorded selection 'hero' for input 'he'
-
-$ aac record he hero
-Recorded selection 'hero' for input 'he'
-
-$ aac suggest he
-her
-here
-help
-head
-health
-heart
-heard
-held
-hear
-hero
-
 $ aac explain he
-her            score= 20000.00 (100.0%)  freq= 20000.00  recency= 0.00
-here           score=  9330.00 ( 46.7%)  freq=  9330.00  recency= 0.00
-help           score=  5620.00 ( 28.1%)  freq=  5620.00  recency= 0.00
-head           score=  3240.00 ( 16.2%)  freq=  3240.00  recency= 0.00
-health         score=  2750.00 ( 13.8%)  freq=  2750.00  recency= 0.00
+her            score= 20000.00 (100.0%)  freq= 20000.00  recency=+0.00
+here           score=  9330.00 ( 46.7%)  freq=  9330.00  recency=+0.00
+help           score=  5620.00 ( 28.1%)  freq=  5620.00  recency=+0.00
+head           score=  3240.00 ( 16.2%)  freq=  3240.00  recency=+0.00
+health         score=  2750.00 ( 13.8%)  freq=  2750.00  recency=+0.00
 ...
-$ aac record he hero && aac record he hero && aac explain he
-her            score= 20000.00 (100.0%)  freq= 20000.00  recency= 0.00
-...
-hero           score=   482.00 (  2.4%)  freq=   479.00  recency=+3.00
+
+$ aac --preset production suggest programing
+programming
 ```
 
-After two selections, `hero` rises into the top 10. Each selection adds 1.5 (the `HistoryPredictor` weight) to its aggregated score, visible in the `recency` column.
+Learning works, but with a 48k vocabulary the frequency scores reach 20,000 — a low-frequency word needs hundreds of selections before it rises visibly in the rankings. That is correct behaviour for a real application. `make demo` shows learning using a small controlled vocabulary where the boost is proportional to the score gap, so movement is visible after five selections.
 
-In the `default` preset, learning happens at the **prediction** layer - `HistoryPredictor` emits history-scored candidates weighted and aggregated with frequency scores before ranking. That is why the boost appears in `freq` rather than `recency`. The `recency` and `production` presets apply `DecayRanker` at ranking time, which is why their `recency` column is non-zero.
+In the `default` preset, learning happens at the **prediction** layer — `HistoryPredictor` emits history-scored candidates weighted and aggregated with frequency scores before ranking. The `recency` and `production` presets apply `DecayRanker` at ranking time instead, which is why their `recency` column is non-zero in `explain` output.
 
 History persists across restarts with full ISO 8601 timestamps, so decay-based presets remain accurate after reload.
 

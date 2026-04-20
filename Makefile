@@ -9,22 +9,7 @@ install:
 # ── Demo ─────────────────────────────────────────────────────────────────────
 
 demo: install
-	@echo ""
-	@echo "── Frequency-ranked suggestions for 'he' ──────────────────────────"
-	poetry run aac suggest he
-	@echo ""
-	@echo "── Score breakdown per suggestion ─────────────────────────────────"
-	poetry run aac explain he
-	@echo ""
-	@echo "── Recording 'hero' selections (recency preset applies decay boost) ─"
-	poetry run aac record he hero
-	poetry run aac record he hero
-	@echo ""
-	@echo "── Score breakdown after learning (hero gains recency boost) ───────"
-	poetry run aac --preset recency explain he
-	@echo ""
-	@echo "── Typo recovery: 'programing' → 'programming' (production preset) ─"
-	poetry run aac --preset production suggest programing
+	poetry run python scripts/demo.py
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 
