@@ -108,9 +108,9 @@ $ aac --preset production suggest programing
 programming
 ```
 
-Learning works, but with a 48k vocabulary the frequency scores reach 20,000 — a low-frequency word needs hundreds of selections before it rises visibly in the rankings. That is correct behaviour for a real application. `make demo` shows learning using a small controlled vocabulary where the boost is proportional to the score gap, so movement is visible after five selections.
+Learning works, but with a 48k vocabulary the frequency scores reach 20,000 - a low-frequency word needs hundreds of selections before it rises visibly in the rankings. That is correct behaviour for a real application. `make demo` shows learning using a small controlled vocabulary where the boost is proportional to the score gap, so movement is visible after five selections.
 
-In the `default` preset, learning happens at the **prediction** layer — `HistoryPredictor` emits history-scored candidates weighted and aggregated with frequency scores before ranking. The `recency` and `production` presets apply `DecayRanker` at ranking time instead, which is why their `recency` column is non-zero in `explain` output.
+In the `default` preset, learning happens at the **prediction** layer - `HistoryPredictor` emits history-scored candidates weighted and aggregated with frequency scores before ranking. The `recency` and `production` presets apply `DecayRanker` at ranking time instead, which is why their `recency` column is non-zero in `explain` output.
 
 History persists across restarts with full ISO 8601 timestamps, so decay-based presets remain accurate after reload.
 

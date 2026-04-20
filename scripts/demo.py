@@ -10,7 +10,7 @@ Shows four things:
 The learning demo uses a small controlled vocabulary so the movement
 is visible after just five selections. With a full 48k vocabulary,
 the frequency scores (up to 20,000) mean meaningful movement requires
-hundreds of selections — which is realistic for a real application but
+hundreds of selections - which is realistic for a real application but
 unhelpful in a two-second demo.
 """
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _section_3_learning() -> None:
 
     # Small vocabulary so frequency scores are proportional to selection boosts.
     # With the full 48k vocab, frequency scores reach 20,000 and require hundreds
-    # of selections before ranking changes visibly — correct behaviour for a real
+    # of selections before ranking changes visibly - correct behaviour for a real
     # app, but not useful in a demo.
     vocab = {
         "help": 500,
@@ -107,7 +107,7 @@ def _section_4_typo() -> None:
     engine = create_engine("production")
     results = [s.value for s in engine.suggest("programing")]
     print(f"  aac suggest programing  →  {results[:5]}")
-    assert "programming" in results, "programming not found — typo recovery failed"
+    assert "programming" in results, "programming not found - typo recovery failed"
 
 
 if __name__ == "__main__":
