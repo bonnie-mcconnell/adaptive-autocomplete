@@ -236,7 +236,16 @@ class TestJsonStoreExceptionCleanup:
     """JsonHistoryStore.save() must clean up the temp file if write fails."""
 
     def test_temp_file_cleaned_up_on_write_failure(self, tmp_path: Path) -> None:
-        """If writing the temp file raises, no orphaned .tmp file is left."""
+        """If writing the temp file raises, no orphaned .tmp file is left.
+
+        Patches ``aac.storage.json_store.os.fdopen`` rather than the global
+        ``os.fdopen``.  Patching the global would intercept the call at the
+        wrong point in the import chain and behave differently across
+        platforms (on Windows the fd is already open before fdopen is called,
+        leaving an orphaned temp file).  Patching the name as imported by the
+        module under test guarantees the exception fires at the right point
+        regardless of platform.
+        """
         from unittest.mock import patch
 
         from aac.domain.history import History
@@ -246,8 +255,10 @@ class TestJsonStoreExceptionCleanup:
         history = History()
         history.record("he", "hello")
 
-        # Simulate fdopen write failure
-        with patch("os.fdopen", side_effect=OSError("disk full")):
+        # Patch os.fdopen as imported by json_store, not the global os module.
+        # This is the call that actually opens the fd for writing; raising here
+        # exercises the except/unlink cleanup path on every platform.
+        with patch("aac.storage.json_store.os.fdopen", side_effect=OSError("disk full")):
             with pytest.raises(OSError, match="disk full"):
                 store.save(history)
 

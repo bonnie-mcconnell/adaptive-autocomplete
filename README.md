@@ -201,6 +201,8 @@ Suggestions + explanations
 
 20,000 `suggest()` calls across 10 query prefixes against the full 48,032-word vocabulary (wordfreq-derived, MIT licensed). Benchmark output from the latest CI run is available as a downloadable artifact in [GitHub Actions](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions) - click the most recent passing run and download `benchmark-results`. Run `make benchmark` to reproduce locally.
 
+Numbers below are from the CI benchmark artifact (Linux, CPython 3.12). Local results will vary by platform and CPU - run `make benchmark` to measure your own environment.
+
 | Preset | avg | p50 | p99 | Notes |
 |--------|-----|-----|-----|-------|
 | stateless | ~82µs | ~73µs | ~124µs | Frequency only |

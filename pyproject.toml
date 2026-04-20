@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "adaptive-autocomplete"
-version = "0.1.0"
+version = "0.1.1"
 description = "Autocomplete engine built from scratch: pluggable predictors, explainable ranking, and a trigram index that runs 100x faster than BK-tree at scale"
 authors = ["Bonnie McConnell <bonniep.mcconnell@gmail.com>"]
 readme = "README.md"
