@@ -1,6 +1,7 @@
 # adaptive-autocomplete
 
 ![CI](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions/workflows/ci.yml/badge.svg)
+[![PyPI](https://img.shields.io/pypi/v/adaptive-autocomplete)](https://pypi.org/project/adaptive-autocomplete/)
 
 Autocomplete engine built from scratch in Python - candidate generation, frequency ranking, typo recovery, learning from user selections, and per-suggestion score explanations.
 
@@ -10,8 +11,19 @@ I built it to understand what ranking infrastructure actually looks like underne
 
 ## Quick start
 
+Using PyPi:
+
+```bash
+pip install adaptive-autocomplete
+```
+
+Cloning the repo:
+
 ```bash
 git clone https://github.com/bonnie-mcconnell/adaptive-autocomplete
+```
+
+```bash
 cd adaptive-autocomplete
 make install
 
