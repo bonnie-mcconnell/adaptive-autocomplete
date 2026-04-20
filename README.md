@@ -11,36 +11,29 @@ I built it to understand what ranking infrastructure actually looks like underne
 
 ## Quick start
 
-Using PyPi:
+**Install from PyPI** (Python 3.10+):
 
 ```bash
 pip install adaptive-autocomplete
 ```
 
-Cloning the repo:
+```bash
+aac suggest he                               # completions ranked by frequency
+aac explain he                               # score breakdown per suggestion
+aac record he hero                           # record a selection - engine learns
+aac --preset production suggest programing   # typo recovery: programing → programming
+```
+
+**Clone and run locally** (for benchmarks, tests, and the demo):
 
 ```bash
 git clone https://github.com/bonnie-mcconnell/adaptive-autocomplete
-```
-
-```bash
 cd adaptive-autocomplete
 make install
 
 make demo        # run the full pipeline end-to-end
 make test        # 261 tests across 4 Python versions
 make benchmark   # latency numbers against the full 48k vocabulary
-```
-
-Or manually:
-
-```bash
-pip install poetry && poetry install
-
-aac suggest he                          # completions ranked by frequency
-aac explain he                          # score breakdown per suggestion
-aac record he hero                      # record a selection - engine learns
-aac --preset production suggest programing   # typo recovery: programing → programming
 ```
 
 Requires Python 3.10+.
