@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-04-20
+
 ### Added
 
 - **Coverage: 99.58%** (up from 98.32%). Targeted tests for all previously
@@ -11,11 +13,23 @@ All notable changes to this project are documented here.
   (both construction paths), non-finite score detection, ``_predict_scored_unranked``,
   ``FrequencyPredictor`` validation, ``Trie._collect`` limit exit, ``TrigramIndex``
   empty-string guard and length-difference pruning, ``TrigramPredictor`` empty-prefix
-  guard, and ``JsonHistoryStore`` exception cleanup on write failure. 261 tests total.
-- Property-based tests with Hypothesis covering four core invariants:
-  `RankingExplanation` arithmetic, ranker candidate-set preservation, and
-  History prefix-index consistency. 31 new tests; 261 total.
+  guard, and ``JsonHistoryStore`` exception cleanup on write failure.
+- Property-based tests with Hypothesis covering four core invariants.
+  31 new tests; 261 total.
+  - `RankingExplanation` arithmetic (`final_score == base_score + history_boost`)
+    holds for all finite non-negative score combinations, including after
+    `merge()` and `apply_history_boost()`
+  - `LearningRanker` and `DecayRanker` never add or remove candidates, across
+    arbitrary suggestion lists and history states
+  - History prefix index always agrees with brute-force full scan, regardless
+    of insertion order or prefix distribution
+  - `apply_history_boost()` invariant preserved after three-way float sum fix
 - `hypothesis = "^6.100"` added to dev dependencies.
+- ``scripts/demo.py``: self-contained end-to-end demonstration using a
+  controlled vocabulary so learning is visible after five selections.
+- CI benchmark artifact: benchmark runs on Python 3.12 and uploads results
+  as a GitHub Actions artifact, making the README performance table
+  independently verifiable.
 
 ### Fixed
 

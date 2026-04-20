@@ -41,8 +41,12 @@ def _section_1_frequency() -> None:
 def _section_2_explain() -> None:
     _header("Score breakdown for 'he'")
     engine = create_engine("default")
-    for exp in engine.explain("he"):
-        pct = exp.final_score / engine.explain("he")[0].final_score * 100
+    explanations = engine.explain("he")
+    # Cache the top score outside the loop - calling explain() per iteration
+    # would re-run the full prediction and ranking pipeline 20 times.
+    max_score = explanations[0].final_score if explanations else 1.0
+    for exp in explanations:
+        pct = exp.final_score / max_score * 100
         print(
             f"  {exp.value:<14s}"
             f"  score={exp.final_score:8.2f} ({pct:5.1f}%)"
