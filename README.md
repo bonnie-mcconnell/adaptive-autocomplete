@@ -3,7 +3,7 @@
 ![CI](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions/workflows/ci.yml/badge.svg)
 [![PyPI](https://img.shields.io/pypi/v/adaptive-autocomplete)](https://pypi.org/project/adaptive-autocomplete/)
 
-Autocomplete engine built from scratch in Python - candidate generation, frequency ranking, typo recovery, learning from user selections, and per-suggestion score explanations.
+Autocomplete engine built from scratch in Python with candidate generation, frequency ranking, typo recovery, learning from user selections, and per-suggestion score explanations.
 
 I built it to understand what ranking infrastructure actually looks like underneath the ML layer: how candidates get generated, scored, merged across predictors, reordered by rankers, and explained back to the caller. The first version was a single function. It became this when I tried to write a test for the learning behaviour and discovered there was no seam to inject a controlled history.
 
