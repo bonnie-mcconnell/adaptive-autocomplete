@@ -239,9 +239,9 @@ The test suite covers correctness properties rather than just happy paths:
 
 ## Why I built this
 
-I wanted to understand what a real ranking system looks like from the inside - not the ML layer on top, but the infrastructure underneath it: how candidates get generated, scored, merged, reordered, and explained.
+I wanted to understand what a real ranking system looks like from the inside, not the ML layer on top, but the infrastructure underneath it: how candidates get generated, scored, merged, reordered, and explained.
 
-The first version was a single function. It worked until I tried to write a test for the learning behaviour and hit a wall: there was no seam to inject a controlled history, so I couldn't isolate what I was testing. The split into prediction and ranking layers came from that problem, not from a design document.
+The first version was a single function. It worked until I tried to write a test for the learning behaviour and hit a wall. There was no seam to inject a controlled history, so I couldn't isolate what I was testing. The split into prediction and ranking layers came from that problem, not from a design document.
 
 The `explain()` bug took an embarrassingly long time to find. The invariant `final_score == base_score + history_boost` was satisfied - the numbers added up - but the engine was passing post-ranking scores into each ranker's `explain()` instead of the pre-ranking baseline. `DecayRanker` was explaining a boost it had already applied. The arithmetic checked out; the semantics were wrong. The fix required reasoning about what each number was supposed to *mean*, not just whether it was correct.
 
