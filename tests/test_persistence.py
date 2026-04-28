@@ -265,3 +265,80 @@ class TestJsonStoreExceptionCleanup:
         # No orphaned temp files should remain
         tmp_files = list(tmp_path.glob(".aac_history_*.tmp"))
         assert tmp_files == [], f"Orphaned temp files: {tmp_files}"
+
+    def test_fd_closed_before_unlink_when_fdopen_raises(self, tmp_path: Path) -> None:
+        """When os.fdopen raises, the raw fd is explicitly closed before unlink.
+
+        This ensures we don't leak the fd and, on Windows, allows os.unlink
+        to succeed (Windows cannot unlink an open file).  We verify the fd
+        close by patching os.close and confirming it is called when
+        fd_owned_by_file is False (i.e. fdopen raised before taking ownership).
+        """
+        from unittest.mock import patch
+
+        from aac.domain.history import History
+        from aac.storage.json_store import JsonHistoryStore
+
+        store = JsonHistoryStore(tmp_path / "history.json")
+        history = History()
+        history.record("he", "hello")
+
+        close_calls: list[int] = []
+
+        def tracking_close(fd: int) -> None:
+            close_calls.append(fd)
+
+        with (
+            patch("aac.storage.json_store.os.fdopen", side_effect=OSError("disk full")),
+            patch("aac.storage.json_store.os.close", side_effect=tracking_close),
+        ):
+            with pytest.raises(OSError, match="disk full"):
+                store.save(history)
+
+        # os.close must have been called exactly once (on the raw fd)
+        assert len(close_calls) == 1, (
+            f"Expected os.close to be called once, got {len(close_calls)} calls"
+        )
+
+    def test_no_fd_double_close_when_write_raises_after_fdopen(self, tmp_path: Path) -> None:
+        """When the write itself raises (after fdopen succeeds), os.close is NOT called.
+
+        fdopen takes ownership of the fd; the context manager (with ... as f:)
+        closes it when the block exits.  Calling os.close again would be a
+        double-close — undefined behaviour.  We verify fd_owned_by_file=True
+        prevents the explicit close.
+        """
+        import builtins
+        from unittest.mock import MagicMock, patch
+
+        from aac.domain.history import History
+        from aac.storage.json_store import JsonHistoryStore
+
+        store = JsonHistoryStore(tmp_path / "history.json")
+        history = History()
+        history.record("he", "hello")
+
+        close_calls: list[int] = []
+        original_open = builtins.open
+
+        def tracking_close(fd: int) -> None:
+            close_calls.append(fd)
+
+        # Patch the file object's write() to raise after fdopen has succeeded,
+        # so fd_owned_by_file is True when the exception is caught.
+        def patched_fdopen(fd: int, *args, **kwargs):  # type: ignore[no-untyped-def]
+            f = original_open(fd, *args, **kwargs)
+            f.write = MagicMock(side_effect=OSError("write error"))  # type: ignore[method-assign]
+            return f
+
+        with (
+            patch("aac.storage.json_store.os.fdopen", side_effect=patched_fdopen),
+            patch("aac.storage.json_store.os.close", side_effect=tracking_close),
+        ):
+            with pytest.raises(OSError, match="write error"):
+                store.save(history)
+
+        # os.close must NOT have been called — fdopen owned the fd
+        assert close_calls == [], (
+            f"os.close should not be called when fdopen succeeded; got calls for fds: {close_calls}"
+        )
