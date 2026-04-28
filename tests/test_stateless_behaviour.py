@@ -10,13 +10,13 @@ def test_stateless_does_not_learn() -> None:
     # Pass None as second arg (vocabulary), PresetBuilder requires both positional args
     engine = get_preset("stateless").build(history, None)
 
-    before = [s.value for s in engine.suggest("he")]
+    before = engine.suggest("he")
 
     # Record many selections, a learning engine would change its output.
     for _ in range(10):
         history.record("he", "hero")
 
-    after = [s.value for s in engine.suggest("he")]
+    after = engine.suggest("he")
 
     assert before == after, (
         "Stateless engine must not change output after history.record(). "

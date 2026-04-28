@@ -40,6 +40,9 @@ def test_engine_can_suggest(preset_name: str) -> None:
     suggestions = engine.suggest("he")
     assert isinstance(suggestions, list)
     assert len(suggestions) > 0
+    assert all(isinstance(s, str) for s in suggestions), (
+        f"suggest() must return List[str], got {[type(s) for s in suggestions[:3]]}"
+    )
 
 
 def test_engine_describe_shape() -> None:

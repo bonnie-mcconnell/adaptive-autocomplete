@@ -33,8 +33,7 @@ def test_default_engine_produces_suggestions() -> None:
 
 def test_robust_engine_handles_typo() -> None:
     engine = create_engine("robust")
-    results = engine.suggest("helo")
-    values = [s.value for s in results]
+    values = engine.suggest("helo")
     assert "hello" in values, f"Expected 'hello' in typo recovery results, got {values}"
 
 
