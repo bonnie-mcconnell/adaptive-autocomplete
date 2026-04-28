@@ -14,5 +14,8 @@ dist/
 .aac_history.json
 
 
-# Test runner cache
+# Test and tool caches
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
