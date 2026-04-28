@@ -9,6 +9,7 @@ from aac.predictors.edit_distance import EditDistancePredictor
 from aac.predictors.frequency import FrequencyPredictor
 from aac.predictors.history import HistoryPredictor
 from aac.predictors.static_prefix import StaticPrefixPredictor
+from aac.predictors.symspell import SymSpellPredictor
 from aac.predictors.trie import TriePrefixPredictor
 from aac.predictors.trigram import TrigramPredictor
 from tests.contracts.predictor_contract import PredictorContractTestMixin
@@ -46,3 +47,8 @@ class TestEditDistancePredictorContract(PredictorContractTestMixin):
 class TestTrigramPredictorContract(PredictorContractTestMixin):
     def make_predictor(self) -> TrigramPredictor:
         return TrigramPredictor(_VOCAB, max_distance=2)
+
+
+class TestSymSpellPredictorContract(PredictorContractTestMixin):
+    def make_predictor(self) -> SymSpellPredictor:
+        return SymSpellPredictor(_VOCAB, max_distance=2)
