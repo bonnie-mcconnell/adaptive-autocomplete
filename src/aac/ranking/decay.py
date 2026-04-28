@@ -55,6 +55,13 @@ class DecayRanker(Ranker, LearnsFromHistory):
     - Bounded
     - Composable
     - Fully explainable
+
+    Performance:
+        ``rank()`` and ``explain()`` share a single ``_decayed_counts()``
+        call per (prefix, now) pair.  When the engine calls both in
+        sequence - as ``explain()`` does - the history scan runs once,
+        not twice.  The cache is invalidated on every ``rank()`` call so
+        a new ``now`` timestamp is always used.
     """
 
     def __init__(
@@ -70,20 +77,43 @@ class DecayRanker(Ranker, LearnsFromHistory):
         self._weight = weight
         self._now = now
 
+        # Cache: stores result from the most recent rank() call.
+        # explain() reuses it when called with the same prefix immediately after rank().
+        # Invalidated at the start of every rank() to ensure fresh history reads.
+        self._cached_prefix: str | None = None
+        self._cached_now: datetime | None = None
+        self._cached_counts: dict[str, float] = {}
+        self._cache_valid: bool = False
+
     def _now_utc(self) -> datetime:
         return self._now if self._now is not None else utcnow()
 
-    def _decayed_counts(self, prefix: str) -> dict[str, float]:
-        now = self._now_utc()
-        counts: dict[str, float] = defaultdict(float)
+    def _decayed_counts(self, prefix: str, now: datetime) -> dict[str, float]:
+        """
+        Return recency-weighted selection counts for prefix.
 
+        Results are cached for the (prefix, now) pair from the most recent
+        rank() call.  explain() hits the cache when called in the same
+        engine pipeline pass, eliminating a redundant O(k) history scan.
+        The cache is invalidated at the start of every rank() call so that
+        history updates between rank() calls are always visible.
+        """
+        if self._cache_valid and prefix == self._cached_prefix and now == self._cached_now:
+            return self._cached_counts
+
+        counts: dict[str, float] = defaultdict(float)
         for entry in self.history.entries_for_prefix(prefix):
             counts[entry.value] += self._decay.weight(
                 now=now,
                 event_time=entry.timestamp,
             )
 
-        return dict(counts)
+        result = dict(counts)
+        self._cached_prefix = prefix
+        self._cached_now = now
+        self._cached_counts = result
+        self._cache_valid = True
+        return result
 
     def rank(
         self,
@@ -93,7 +123,11 @@ class DecayRanker(Ranker, LearnsFromHistory):
         if not suggestions:
             return []
 
-        decayed = self._decayed_counts(prefix)
+        # Invalidate so this rank() always re-fetches history, then cache
+        # the result so explain() can reuse it without a second scan.
+        self._cache_valid = False
+        now = self._now_utc()
+        decayed = self._decayed_counts(prefix, now)
         if not decayed:
             return list(suggestions)
 
@@ -133,20 +167,29 @@ class DecayRanker(Ranker, LearnsFromHistory):
         prefix: str,
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[RankingExplanation]:
-        decayed = self._decayed_counts(prefix)
+        # Reuse the cached decayed counts from the rank() call that the engine
+        # made immediately before this explain() call.  If the cache misses
+        # (e.g. explain() called standalone), recompute.
+        now = self._now_utc()
+        decayed = self._decayed_counts(prefix, now)
 
         explanations: list[RankingExplanation] = []
 
         for s in suggestions:
             boost = decayed.get(s.suggestion.value, 0.0) * self._weight
-
+            # DecayRanker is a boost ranker: it contributes recency-weighted
+            # history signal, not a base score. base_score=0.0 here ensures
+            # the merged explanation's base_score equals only ScoreRanker's
+            # contribution - the true pre-ranking predictor score.
             explanations.append(
                 RankingExplanation(
                     value=s.suggestion.value,
-                    base_score=0.0,   # this ranker adds, does not define base
+                    base_score=0.0,
                     history_boost=boost,
                     final_score=boost,
                     source="decay",
+                    base_components={},
+                    history_components={"decay": boost} if boost > 0 else {},
                 )
             )
 

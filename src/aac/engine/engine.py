@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 from collections.abc import Sequence
 from typing import TypedDict
@@ -9,7 +10,6 @@ from aac.domain.types import (
     CompletionContext,
     Predictor,
     ScoredSuggestion,
-    Suggestion,
     WeightedPredictor,
 )
 from aac.ranking.base import Ranker
@@ -128,23 +128,46 @@ class AutocompleteEngine:
     # Core pipeline
     # ------------------------------------------------------------------
 
-    def _score(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
+    def _score(
+        self,
+        ctx: CompletionContext,
+    ) -> list[ScoredSuggestion]:
         """
         Collect and aggregate scored suggestions from all predictors.
 
         Aggregation is additive across predictors and weights.
         Predictor explanations are preserved but not interpreted here.
         """
+        aggregated, _ = self._score_with_breakdown(ctx)
+        return aggregated
+
+    def _score_with_breakdown(
+        self,
+        ctx: CompletionContext,
+    ) -> tuple[list[ScoredSuggestion], dict[str, dict[str, float]]]:
+        """
+        Like _score(), but also returns a per-predictor weighted contribution map.
+
+        Returns:
+            (suggestions, breakdown) where breakdown[value][predictor_name]
+            is the weighted score that predictor contributed for that value.
+
+        Used by explain() to build base_components without parsing trace strings.
+        Trace strings are human-readable and must not be treated as structured data -
+        predictor names are arbitrary and may contain any characters.
+        """
         aggregated: dict[str, ScoredSuggestion] = {}
+        breakdown: dict[str, dict[str, float]] = {}
 
         for weighted in self._predictors:
             results = weighted.predictor.predict(ctx)
+            predictor_name = weighted.predictor.name
 
             for scored in results:
                 key = scored.suggestion.value
                 weighted_score = scored.score * weighted.weight
                 trace_entry = (
-                    f"Predictor={weighted.predictor.name}, "
+                    f"Predictor={predictor_name}, "
                     f"weight={weighted.weight}, raw_score={scored.score}"
                 )
 
@@ -155,6 +178,7 @@ class AutocompleteEngine:
                         explanation=scored.explanation,
                         trace=(trace_entry,),
                     )
+                    breakdown[key] = {predictor_name: weighted_score}
                 else:
                     prev = aggregated[key]
                     aggregated[key] = ScoredSuggestion(
@@ -163,8 +187,11 @@ class AutocompleteEngine:
                         explanation=prev.explanation,
                         trace=prev.trace + (trace_entry,),
                     )
+                    breakdown[key][predictor_name] = (
+                        breakdown[key].get(predictor_name, 0.0) + weighted_score
+                    )
 
-        return list(aggregated.values())
+        return list(aggregated.values()), breakdown
 
     def _apply_ranking(
         self,
@@ -207,16 +234,25 @@ class AutocompleteEngine:
     # Public API
     # ------------------------------------------------------------------
 
-    def suggest(self, text: str) -> list[Suggestion]:
+    def suggest(self, text: str, *, limit: int | None = None) -> list[str]:
         """
-        Return ranked suggestions for user-facing consumption.
+        Return ranked suggestion strings for user-facing consumption.
+
+        Parameters:
+            text:  The input prefix to complete.
+            limit: Maximum number of suggestions to return.  If omitted,
+                   all suggestions from the predictors are returned.
+                   Equivalent to ``engine.suggest(text)[:limit]`` but
+                   avoids constructing the full list when only the top-N
+                   are needed.
 
         Scores and explanations are intentionally hidden.
-        Use explain() or debug() for introspection.
+        Use explain() or predict_scored() for introspection.
         """
         ctx = CompletionContext(text)
         ranked = self._apply_ranking(ctx, self._score(ctx))
-        return [s.suggestion for s in ranked]
+        values = [s.suggestion.value for s in ranked]
+        return values[:limit] if limit is not None else values
 
     def predict_scored(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
         """
@@ -243,55 +279,127 @@ class AutocompleteEngine:
 
     def explain(self, text: str) -> list[RankingExplanation]:
         """
-        Return per-suggestion ranking explanations.
+        Return per-suggestion ranking explanations in final ranked order.
 
-        Each ranker's explain() receives the pre-ranking scores so that
-        explanations reflect each ranker's individual contribution rather
-        than the cumulative post-ranking state. Without this, rankers that
-        apply score boosts (e.g. DecayRanker) would double-count their
-        contribution when their explain() saw already-boosted scores.
+        Architecture:
+            Explanations are built from two sources of ground truth:
 
-        The final explanation for each suggestion is the merge of all
-        ranker contributions, ordered by the final ranked position.
+            1. **Base score** - the aggregated predictor score from ``_score()``,
+               before any ranker touches it. This is always the correct base regardless
+               of which rankers are present or how many.
+
+            2. **Ranker deltas** - for each ranker, the score delta it applied:
+               ``post_rank_score - pre_rank_score``. Each ranker's explain() method
+               provides the *identity* of its boost (which source, under which key)
+               even when the delta is zero.
+
+            This approach is immune to the ranker-composition problem that plagues
+            explanation-by-accumulation: there is no way for one ranker's explanation
+            to accidentally double-count or overwrite another's base score.
+
+        Returns explanations ordered by final ranked position.
         """
         ctx = CompletionContext(text)
 
-        # Capture pre-ranking scores - the clean baseline each ranker
-        # should reason about independently.
-        pre_ranking = self._score(ctx)
+        # Ground truth 1: pre-ranking predictor scores, with per-predictor breakdown.
+        pre_ranking, predictor_breakdown = self._score_with_breakdown(ctx)
+        pre_by_value = {s.suggestion.value: s for s in pre_ranking}
+
+        # Ground truth 2: post-ranking scores (after all rankers applied).
         ranked = self._apply_ranking(ctx, pre_ranking)
+        post_by_value = {s.suggestion.value: s for s in ranked}
 
-        pre_ranking_by_value = {s.suggestion.value: s for s in pre_ranking}
-        pre_ranking_ordered = [
-            pre_ranking_by_value[s.suggestion.value] for s in ranked
-        ]
+        # For each ranker, capture its score delta per suggestion.
+        ranker_boost_labels: list[tuple[str, dict[str, float]]] = []
 
-        aggregated: dict[str, RankingExplanation] = {}
-
+        running = list(pre_ranking)
         for ranker in self._rankers:
-            for exp in ranker.explain(ctx.text, pre_ranking_ordered):
-                if exp.value not in aggregated:
-                    aggregated[exp.value] = exp
-                else:
-                    aggregated[exp.value] = aggregated[exp.value].merge(exp)
+            pre_scores = {s.suggestion.value: s.score for s in running}
+            after = ranker.rank(ctx.text, running)
+            post_scores = {s.suggestion.value: s.score for s in after}
 
-        return [
-            aggregated[s.suggestion.value]
-            for s in ranked
-            if s.suggestion.value in aggregated
-        ]
-
-    def explain_as_dicts(self, text: str) -> list[dict[str, float | str]]:
-        """Convenience adapter for CLI and serialisation layers."""
-        return [
-            {
-                "value": e.value,
-                "base_score": e.base_score,
-                "history_boost": e.history_boost,
-                "final_score": e.final_score,
+            source_name = ranker.__class__.__name__.replace("Ranker", "").lower()
+            deltas: dict[str, float] = {
+                v: post_scores[v] - pre_scores[v]
+                for v in pre_scores
+                if abs(post_scores[v] - pre_scores[v]) > 1e-12
             }
-            for e in self.explain(text)
-        ]
+            if deltas:
+                ranker_boost_labels.append((source_name, deltas))
+
+            running = after
+
+        # Build final explanations: base from _score_with_breakdown (structured,
+        # no string parsing), boost from ranker deltas.
+        explanations: list[RankingExplanation] = []
+        for s in ranked:
+            value = s.suggestion.value
+            pre = pre_by_value[value]
+            base_score = pre.score
+            predictor_source = pre.explanation.source if pre.explanation else "unknown"
+
+            # Per-predictor weighted contributions - exact, not parsed from trace strings.
+            base_components = dict(predictor_breakdown.get(value, {predictor_source: base_score}))
+
+            total_boost = post_by_value[value].score - base_score
+            history_components: dict[str, float] = {}
+            for ranker_name, deltas in ranker_boost_labels:
+                if value in deltas:
+                    history_components[ranker_name] = deltas[value]
+
+            explanations.append(
+                RankingExplanation(
+                    value=value,
+                    base_score=base_score,
+                    history_boost=total_boost,
+                    final_score=base_score + total_boost,
+                    source=predictor_source,
+                    base_components=base_components,
+                    history_components=history_components,
+                )
+            )
+
+        return explanations
+
+    def explain_as_dicts(self, text: str) -> list[dict[str, object]]:
+        """
+        Convenience adapter for CLI and serialisation layers.
+
+        Returns per-suggestion dicts with top-level score fields and, when
+        multiple rankers contributed, a ``components`` breakdown showing each
+        ranker's individual contribution.  The ``source`` field names the
+        composite when more than one ranker contributed, rather than silently
+        preserving the name of the first ranker.
+
+        Schema::
+
+            {
+                "value": str,
+                "base_score": float,
+                "history_boost": float,
+                "final_score": float,
+                "sources": [str, ...],         # all contributing rankers
+                "base_components": {str: float},
+                "history_components": {str: float},
+            }
+        """
+        results: list[dict[str, object]] = []
+        for e in self.explain(text):
+            all_sources = list(e.base_components.keys()) + [
+                k for k in e.history_components if k not in e.base_components
+            ]
+            results.append(
+                {
+                    "value": e.value,
+                    "base_score": e.base_score,
+                    "history_boost": e.history_boost,
+                    "final_score": e.final_score,
+                    "sources": all_sources if len(all_sources) > 1 else [e.source],
+                    "base_components": dict(e.base_components),
+                    "history_components": dict(e.history_components),
+                }
+            )
+        return results
 
     # ------------------------------------------------------------------
     # Learning
@@ -342,6 +450,47 @@ class AutocompleteEngine:
             "ranked": ranked,
             "suggestions": [s.suggestion.value for s in ranked],
         }
+
+    # ------------------------------------------------------------------
+    # Async API
+    # ------------------------------------------------------------------
+
+    async def suggest_async(
+        self,
+        text: str,
+        *,
+        limit: int | None = None,
+    ) -> list[str]:
+        """
+        Async wrapper around suggest().
+
+        Runs the synchronous suggest() in the default thread pool executor
+        so it does not block the event loop.  Use this in async frameworks
+        (FastAPI, Starlette, aiohttp) to keep request handlers non-blocking.
+
+        ``asyncio.get_running_loop()`` is used rather than the deprecated
+        ``get_event_loop()``.  ``get_running_loop()`` raises ``RuntimeError``
+        if called outside a running coroutine, making misuse explicit rather
+        than silently returning or creating a new loop.
+
+        Example::
+
+            @app.get("/suggest")
+            async def suggest(q: str) -> list[str]:
+                return await engine.suggest_async(q, limit=10)
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: self.suggest(text, limit=limit))
+
+    async def explain_async(self, text: str) -> list[RankingExplanation]:
+        """Async wrapper around explain(). See suggest_async() for rationale."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: self.explain(text))
+
+    async def record_selection_async(self, text: str, value: str) -> None:
+        """Async wrapper around record_selection(). See suggest_async() for rationale."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self.record_selection(text, value))
 
     # ------------------------------------------------------------------
     # Introspection

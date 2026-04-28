@@ -21,12 +21,12 @@ class ScoreRanker(Ranker):
         prefix: str,
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[ScoredSuggestion]:
-        # Defensive copy via sorted()
-        return sorted(
-            suggestions,
-            key=lambda s: s.score,
-            reverse=True,
-        )
+        # Sort by descending score, with original index as a stable tiebreaker.
+        # Matches LearningRanker and DecayRanker's sort contract so that
+        # composing rankers produces deterministic output regardless of order.
+        indexed = list(enumerate(suggestions))
+        indexed.sort(key=lambda t: (-t[1].score, t[0]))
+        return [s for _, s in indexed]
 
     def explain(
         self,
@@ -34,14 +34,11 @@ class ScoreRanker(Ranker):
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[RankingExplanation]:
         ranked = self.rank(prefix, suggestions)
-
         return [
-            RankingExplanation(
+            RankingExplanation.from_predictor(
                 value=s.suggestion.value,
-                base_score=s.score,
-                history_boost=0.0,
-                final_score=s.score,
-                source="score",
+                score=s.score,
+                source=s.explanation.source if s.explanation else "score",
             )
             for s in ranked
         ]

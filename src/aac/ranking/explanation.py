@@ -41,6 +41,16 @@ class RankingExplanation:
                 f"!= base_score + history_boost ({expected})"
             )
 
+    def __repr__(self) -> str:
+        return (
+            f"RankingExplanation("
+            f"value={self.value!r}, "
+            f"base={self.base_score:.4f}, "
+            f"boost={self.history_boost:+.4f}, "
+            f"final={self.final_score:.4f}"
+            f")"
+        )
+
     def to_dict(self) -> dict[str, float | str | dict[str, float]]:
         """
         JSON-serializable representation.
@@ -95,6 +105,10 @@ class RankingExplanation:
     ) -> RankingExplanation:
         """
         Create an explanation from a single predictor contribution.
+
+        Used by rankers that surface a predictor's raw score as the base.
+        Populates ``base_components`` with the source and score so that
+        ``explain_as_dicts()`` can show a per-predictor breakdown.
         """
         return RankingExplanation(
             value=value,
@@ -113,14 +127,18 @@ class RankingExplanation:
         source: str,
     ) -> RankingExplanation:
         """
-        Apply a learning/history adjustment.
+        Return a new explanation with a history boost applied.
+
+        Used by rankers that layer a recency or learning adjustment on top
+        of an existing base explanation. Accumulates the boost into
+        ``history_components`` under the named source so that
+        ``explain_as_dicts()`` can show a per-ranker boost breakdown.
 
         Note on arithmetic: ``new_history_boost`` is computed first, then
         ``final_score = base_score + new_history_boost``.  This matches
-        the invariant check in ``__post_init__`` and avoids the same
-        floating-point precision issue fixed in ``merge()``: summing three
-        independent terms (base + old_boost + new_boost) can round
-        differently from the two-term sum the invariant check uses.
+        the invariant check in ``__post_init__`` and avoids floating-point
+        rounding errors where a three-term sum evaluates differently from
+        the two-term sum the invariant check uses.
         """
         new_history_boost = self.history_boost + boost
         return RankingExplanation(

@@ -39,6 +39,12 @@ class LearningRanker(Ranker, LearnsFromHistory):
     - Learning influence is bounded by dominance_ratio
     - Deterministic and stable
     - Does not mutate inputs or history
+
+    Performance:
+        ``rank()`` and ``explain()`` share a single ``counts_for_prefix()``
+        call per prefix.  When the engine calls both in sequence - as
+        ``explain()`` does - the history lookup runs once, not twice.
+        The cache is keyed by prefix and invalidated on every ``rank()`` call.
     """
 
     def __init__(
@@ -59,6 +65,29 @@ class LearningRanker(Ranker, LearnsFromHistory):
 
         self._boost = boost
         self._dominance_ratio = dominance_ratio
+
+        # Cache: most recent counts_for_prefix result.
+        self._cached_prefix: str | None = None
+        self._cached_counts: dict[str, int] = {}
+        self._cache_valid: bool = False
+
+    # --- cache ---
+
+    def _counts(self, prefix: str) -> dict[str, int]:
+        """Return counts for prefix, reusing cache when prefix is unchanged since last rank()."""
+        if prefix == self._cached_prefix and self._cache_valid:
+            return self._cached_counts
+        counts = self.history.counts_for_prefix(prefix)
+        self._cached_prefix = prefix
+        self._cached_counts = counts
+        self._cache_valid = True
+        return counts
+
+    def _invalidate_cache(self) -> None:
+        """Mark cache as stale.  Called at the start of rank() so explain() reuses
+        the counts fetched during that rank() call, but the next rank() call always
+        re-fetches in case history was updated between calls."""
+        self._cache_valid = False
 
     # --- learning internals ---
 
@@ -103,7 +132,10 @@ class LearningRanker(Ranker, LearnsFromHistory):
         if not suggestions:
             return []
 
-        counts = self.history.counts_for_prefix(prefix)
+        # Invalidate cache so this rank() always fetches fresh history,
+        # then store the result so explain() can reuse it without a second fetch.
+        self._invalidate_cache()
+        counts = self._counts(prefix)
 
         # Invariant: no history signal => preserve original order
         if not counts:
@@ -148,27 +180,50 @@ class LearningRanker(Ranker, LearnsFromHistory):
         # cap than the one used during rank(), causing the explanation to
         # be arithmetically inconsistent with the actual ranking decision.
         pre_boost_scores = {s.suggestion.value: s.score for s in suggestions}
-        counts = self.history.counts_for_prefix(prefix)
 
-        # Produce explanations in rank() order so callers can rely on ordering.
-        ranked = self.rank(prefix, suggestions)
+        # Reuse cache from rank() if prefix matches.  Do NOT call self.rank()
+        # here - that would invalidate the cache, defeating the optimisation,
+        # and re-sort the same suggestions a second time.
+        counts = self._counts(prefix)
+
+        # Produce explanations in the same order rank() would produce them.
+        # We replicate the sort key rather than calling rank() to avoid the
+        # cache invalidation and the extra allocation of a fully boosted list.
+        def _final_score(s: ScoredSuggestion) -> float:
+            count = counts.get(s.suggestion.value, 0)
+            boost = self._compute_history_boost(
+                count=count,
+                base_score=pre_boost_scores[s.suggestion.value],
+            )
+            return pre_boost_scores[s.suggestion.value] + boost
+
+        ordered = sorted(
+            enumerate(suggestions),
+            key=lambda t: (-_final_score(t[1]), t[0]),
+        )
+
         explanations: list[RankingExplanation] = []
-
-        for s in ranked:
+        for _, s in ordered:
             count = counts.get(s.suggestion.value, 0)
             base_score = pre_boost_scores[s.suggestion.value]
             boost = self._compute_history_boost(
                 count=count,
                 base_score=base_score,
             )
-
+            # LearningRanker is a boost ranker: it contributes history signal,
+            # not a base score. Emitting base_score=0.0 ensures that when this
+            # explanation is merged with ScoreRanker's explanation, the merged
+            # base_score equals only ScoreRanker's value (the true pre-ranking
+            # score) - not a doubled sum of both rankers' claims.
             explanations.append(
                 RankingExplanation(
                     value=s.suggestion.value,
-                    base_score=base_score,
+                    base_score=0.0,
                     history_boost=boost,
-                    final_score=base_score + boost,
+                    final_score=boost,
                     source="learning",
+                    base_components={},
+                    history_components={"learning": boost} if boost > 0 else {},
                 )
             )
 

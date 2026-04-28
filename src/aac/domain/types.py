@@ -107,11 +107,26 @@ class PredictorExplanation:
 @dataclass(frozen=True)
 class WeightedPredictor:
     """
-    Predictor paired with a weight applied during aggregation.
+    Predictor paired with a weight applied during score aggregation.
+
+    Weights must be positive. A weight of 0.0 would silence the predictor
+    entirely (use a predictor list without it instead). A weight above ~10.0
+    will push scores outside the (0, 1] range of the other predictors and
+    make the weighted sum dominated by this predictor alone - which is almost
+    never the intended behaviour. Both are caught at construction time.
+
+    The practical useful range is (0.0, 5.0]. Default is 1.0.
     """
 
     predictor: Predictor
     weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.weight <= 0.0:
+            raise ValueError(
+                f"WeightedPredictor weight must be > 0, got {self.weight!r}. "
+                f"To silence a predictor, remove it from the predictor list."
+            )
 
     @property
     def name(self) -> str:
