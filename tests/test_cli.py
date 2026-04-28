@@ -74,7 +74,7 @@ def test_explain_contains_score_fields(tmp_path: Path) -> None:
                      history_path=tmp_path / "h.json")
     assert code == 0
     assert "score=" in out
-    assert "freq=" in out
+    assert "base=" in out
 
 
 def test_explain_limit_respected(tmp_path: Path) -> None:
@@ -140,9 +140,11 @@ def test_record_then_suggest_shows_learning(tmp_path: Path) -> None:
 # ------------------------------------------------------------------
 
 def test_presets_subcommand_lists_all(tmp_path: Path) -> None:
+    from aac.presets import available_presets
     code, out = _run("presets", history_path=tmp_path / "h.json")
     assert code == 0
-    for name in ["default", "production", "recency", "robust", "stateless"]:
+    for name in available_presets():
+        assert name in out
         assert name in out
 
 
@@ -189,3 +191,126 @@ def test_explain_no_suggestions_prints_message(tmp_path: Path) -> None:
     assert code == 0
     # Either empty output or the no-explanation message - must not crash
     assert "error" not in out.lower() or "no" in out.lower()
+
+
+# ------------------------------------------------------------------
+# presets --json flag
+# ------------------------------------------------------------------
+
+def test_presets_json_flag_outputs_valid_json() -> None:
+    """presets --json outputs a valid JSON array with all preset names."""
+    import json as _json
+
+    code, out = _run("presets", "--json")
+    assert code == 0, f"Expected exit 0, got {code}"
+    data = _json.loads(out)
+    assert isinstance(data, list)
+    from aac.presets import available_presets
+    names = {p["name"] for p in data}
+    assert set(available_presets()) == names
+    for preset in data:
+        assert "description" in preset
+        assert "predictors" in preset
+        assert "ranking" in preset
+        assert "learning" in preset
+
+
+# ------------------------------------------------------------------
+# BrokenPipeError handling
+# ------------------------------------------------------------------
+
+def test_broken_pipe_exits_cleanly(tmp_path: Path) -> None:
+    """BrokenPipeError during output is caught and main() exits with code 0.
+
+    Regression test for the bug where `aac suggest he | head -5` printed a
+    Python traceback to stderr.  We simulate a broken pipe by patching the
+    suggest.run() call to raise BrokenPipeError directly, which is what
+    happens when print() writes to a pipe whose consumer has closed.
+    """
+    from unittest.mock import patch as _patch
+
+    exit_code = 0
+    with _patch("sys.argv", ["aac", "--preset", "stateless",
+                              "--history-path", str(tmp_path / "h.json"),
+                              "suggest", "he"]):
+        with _patch("aac.cli.suggest.run", side_effect=BrokenPipeError):
+            try:
+                main()
+            except SystemExit as e:
+                exit_code = int(e.code) if e.code is not None else 0
+            except BrokenPipeError:
+                exit_code = 1  # BrokenPipeError was not caught — test fails
+
+    # Must exit 0 — BrokenPipeError must not propagate as unhandled exception
+    assert exit_code == 0, (
+        f"BrokenPipeError was not caught: main() exited with code {exit_code}"
+    )
+
+
+# ------------------------------------------------------------------
+# explain output format
+# ------------------------------------------------------------------
+
+def test_explain_recency_column_always_shows_sign(tmp_path: Path) -> None:
+    """recency column uses signed format (+0.00) even when boost is zero.
+
+    Regression test for the bug where zero boost was displayed as ' 0.00'
+    (space prefix) instead of '+0.00', inconsistent with non-zero boosts
+    and with demo.py output.
+    """
+    code, out = _run("--preset", "stateless", "explain", "he",
+                     history_path=tmp_path / "h.json")
+    assert code == 0
+    lines = [ln for ln in out.strip().splitlines() if "score=" in ln]
+    assert lines, "Expected at least one scored line"
+    for line in lines:
+        assert "boost=+0.00" in line or "boost=+" in line, (
+            f"Expected signed boost format (boost=+N.NN) in line:\n  {line}"
+        )
+
+
+class TestVocabPathFlag:
+    """CLI --vocab-path and --vocab-format flags."""
+
+    def test_wordlist_vocab_replaces_english(self, tmp_path: Path) -> None:
+        vocab_file = tmp_path / "words.txt"
+        vocab_file.write_text("zork\nzeppelin\nzigzag\n")
+        code, out = _run(
+            "--vocab-path", str(vocab_file),
+            "suggest", "z",
+            history_path=tmp_path / "h.json",
+        )
+        assert code == 0
+        lines = [line for line in out.strip().splitlines() if line]
+        assert set(lines) == {"zork", "zeppelin", "zigzag"}
+
+    def test_text_format_counts_frequency(self, tmp_path: Path) -> None:
+        corpus_file = tmp_path / "corpus.txt"
+        corpus_file.write_text("programming programming programming python python")
+        code, out = _run(
+            "--vocab-path", str(corpus_file),
+            "--vocab-format", "text",
+            "suggest", "prog",
+            history_path=tmp_path / "h.json",
+        )
+        assert code == 0
+        assert "programming" in out
+
+    def test_missing_vocab_file_exits_with_error(self, tmp_path: Path) -> None:
+        code, out = _run(
+            "--vocab-path", str(tmp_path / "nonexistent.txt"),
+            "suggest", "he",
+            history_path=tmp_path / "h.json",
+        )
+        assert code != 0
+
+    def test_vocab_path_explain_works(self, tmp_path: Path) -> None:
+        vocab_file = tmp_path / "words.txt"
+        vocab_file.write_text("hello\nhelp\nhero\n")
+        code, out = _run(
+            "--vocab-path", str(vocab_file),
+            "explain", "he",
+            history_path=tmp_path / "h.json",
+        )
+        assert code == 0
+        assert "score=" in out
