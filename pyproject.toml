@@ -1,15 +1,17 @@
 [tool.poetry]
 name = "adaptive-autocomplete"
-version = "0.1.1"
+version = "0.3.0"
 description = "Autocomplete engine built from scratch: pluggable predictors, explainable ranking, and a trigram index that runs 100x faster than BK-tree at scale"
+license = "MIT"
 authors = ["Bonnie McConnell <bonniep.mcconnell@gmail.com>"]
 readme = "README.md"
 homepage = "https://github.com/bonnie-mcconnell/adaptive-autocomplete"
 repository = "https://github.com/bonnie-mcconnell/adaptive-autocomplete"
-keywords = ["autocomplete", "search", "ranking", "nlp", "machine-learning"]
+keywords = ["autocomplete", "search", "ranking", "nlp", "information-retrieval"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
     "Topic :: Software Development :: Libraries",
     "Topic :: Text Processing :: Linguistic",
     "Programming Language :: Python :: 3",
@@ -72,6 +74,9 @@ exclude = ["tests"]
 minversion = "8.0"
 addopts = "-ra -q --cov=aac --cov-report=term-missing --cov-fail-under=85"
 testpaths = ["tests"]
+markers = [
+    "integration: end-to-end tests that invoke the CLI as a subprocess (slow; skipped with -m 'not integration')",
+]
 
 [build-system]
 requires = ["poetry-core"]
