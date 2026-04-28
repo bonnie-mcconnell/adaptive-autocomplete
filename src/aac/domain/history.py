@@ -203,16 +203,22 @@ class History:
         """
         Total count for a specific value across all prefixes.
 
-        O(n) in total history length. Unlike counts_for_prefix() which
-        uses the prefix index, this method scans all entries because the
-        index is keyed by prefix, not by value. For value-scoped lookups
-        at high frequency, consider building a separate value index.
+        WARNING: O(n) full scan of the entire history list. Unlike
+        ``counts_for_prefix()`` which uses the prefix index (O(k)), this
+        method has no index to exploit. Do not call this in hot paths.
+
+        When the prefix is known (which it almost always is), use::
+
+            counts_for_prefix(prefix).get(value, 0)
+
+        This method is intended for inspection, diagnostics, and tests only.
+        It is not used by any predictor or ranker in this library.
 
         Parameters:
             value: Completion value to count.
 
         Returns:
-            Number of times the value was selected.
+            Number of times the value was selected across all prefixes.
         """
         value = str(value)
         return sum(
@@ -226,20 +232,35 @@ class History:
 
     def snapshot(self) -> dict[str, dict[str, int]]:
         """
-        Return a count-only snapshot of history data.
+        Return a count-only (timestamp-free) view of history data.
 
-        Format:
-            {
-                "<prefix>": {
-                    "<value>": count
-                }
-            }
+        .. deprecated::
+            ``snapshot()`` returns the v1 count-only format and omits
+            timestamps, so recency-aware rankers (``DecayRanker``) lose
+            their signal if this is used for persistence.  For persistence
+            use ``JsonHistoryStore.save()``, which writes the full v2 format
+            with timestamps.  For inspection use ``snapshot_counts()``,
+            which is identical to this method but has a name that makes the
+            lossy nature explicit.
 
-        Notes:
-            - Timestamps are omitted. This format is the v1 storage
-              schema and is kept for inspection and backwards compatibility.
-              For full persistence including timestamps, use JsonHistoryStore
-              which writes the v2 format.
+        Format::
+
+            {"<prefix>": {"<value>": count}}
+        """
+        return self.snapshot_counts()
+
+    def snapshot_counts(self) -> dict[str, dict[str, int]]:
+        """
+        Return a count-only (timestamp-free) view of history data.
+
+        Timestamps are omitted.  This is useful for inspection and testing
+        but must **not** be used for persistence - it is the v1 storage
+        schema and will cause ``DecayRanker`` to lose all recency signal on
+        the next load.  For persistence, use ``JsonHistoryStore.save()``.
+
+        Format::
+
+            {"<prefix>": {"<value>": count}}
         """
         snapshot: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 

@@ -74,6 +74,23 @@ class TriePrefixPredictor(Predictor):
     predictor for score differentiation. For use cases where frequency
     data is available, FrequencyPredictor builds its own prefix index
     and carries per-word scores through the pipeline.
+
+    Ordering:
+        When used alone, all suggestions have equal score (1.0) and the
+        engine's ScoreRanker will sort them in the order they emerge from
+        the trie - which is alphabetical, because ``Trie._collect()``
+        iterates ``sorted(node.children)``.  This is deterministic but
+        arbitrary: "ant" will always rank above "zoo" regardless of
+        frequency or history.
+
+        To get meaningful ordering, combine with FrequencyPredictor or
+        HistoryPredictor:
+
+        - ``FrequencyPredictor`` adds per-word scores so common words
+          rise above rare ones.
+        - ``HistoryPredictor`` adds selection-count scores so recently
+          chosen words rise above alphabetically-early ones.
+        - Without either, equal scores produce alphabetical output.
     """
 
     name = "trie_prefix"
