@@ -437,3 +437,166 @@ class TestHistoryIndexConsistency:
             history.record(prefix, value + "_noise", timestamp=_FIXED_NOW)
 
         assert history.count(value) == n
+
+
+# ---------------------------------------------------------------------------
+# Invariant 5: All predictors emit scores in (0, 1] for any valid input
+# ---------------------------------------------------------------------------
+
+class TestNormalisedScoreInvariant:
+    """
+    All predictors must emit scores in (0, 1] for any valid vocabulary
+    and prefix combination.
+
+    This invariant is the foundation of the weighted-aggregation model:
+    if predictor scores are not in a common bounded space, weights become
+    meaningless and dominant predictors (by raw scale, not by signal
+    quality) crowd out the rest.
+
+    Invariant: for every ScoredSuggestion s returned by any predictor,
+        0 < s.score <= 1.0
+
+    Why property-based?
+        Manual tests can only cover a handful of (vocab, freq, prefix)
+        combinations. Hypothesis generates degenerate cases that manual
+        authorship misses: single-word vocabularies, all-equal frequencies,
+        max_freq=1, high-count histories, unicode prefixes, frequencies
+        that differ by many orders of magnitude.
+    """
+
+    @given(
+        freq_pairs=st.lists(
+            st.tuples(
+                st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=2, max_size=10),
+                st.integers(min_value=1, max_value=1_000_000),
+            ),
+            min_size=1,
+            max_size=30,
+            unique_by=lambda x: x[0],
+        ),
+        prefix_len=st.integers(min_value=1, max_value=4),
+    )
+    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    def test_frequency_predictor_scores_in_unit_interval(
+        self,
+        freq_pairs: list[tuple[str, int]],
+        prefix_len: int,
+    ) -> None:
+        """FrequencyPredictor scores must lie in (0, 1] for all valid inputs."""
+        from aac.domain.types import CompletionContext
+        from aac.predictors.frequency import FrequencyPredictor
+
+        frequencies = dict(freq_pairs)
+        predictor = FrequencyPredictor(frequencies)
+
+        # Generate prefixes from actual vocabulary words so we get real hits
+        for word, _ in freq_pairs[:5]:
+            if len(word) > prefix_len:
+                prefix = word[:prefix_len]
+                for s in predictor.predict(CompletionContext(prefix)):
+                    assert 0.0 < s.score <= 1.0 + 1e-9, (
+                        f"FrequencyPredictor score {s.score!r} out of (0, 1] "
+                        f"for word={s.value!r}, prefix={prefix!r}"
+                    )
+
+    @given(
+        prefix=st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=6),
+        selections=st.lists(
+            st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=2, max_size=10),
+            min_size=1,
+            max_size=20,
+        ),
+        counts=st.lists(
+            st.integers(min_value=1, max_value=500),
+            min_size=1,
+            max_size=20,
+        ),
+    )
+    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    def test_history_predictor_scores_in_unit_interval(
+        self,
+        prefix: str,
+        selections: list[str],
+        counts: list[int],
+    ) -> None:
+        """HistoryPredictor scores must lie in (0, 1] for all valid inputs."""
+        from aac.domain.history import History
+        from aac.predictors.history import HistoryPredictor
+
+        history = History()
+        for value, count in zip(selections, counts, strict=False):
+            for _ in range(count):
+                history.record(prefix, value, timestamp=_FIXED_NOW)
+
+        predictor = HistoryPredictor(history)
+        for s in predictor.predict(prefix):
+            assert 0.0 < s.score <= 1.0 + 1e-9, (
+                f"HistoryPredictor score {s.score!r} out of (0, 1] "
+                f"for value={s.value!r}, prefix={prefix!r}"
+            )
+
+    @given(
+        freq_pairs=st.lists(
+            st.tuples(
+                st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=2, max_size=10),
+                st.integers(min_value=1, max_value=1_000_000),
+            ),
+            min_size=2,
+            max_size=20,
+            unique_by=lambda x: x[0],
+        ),
+        prefix_len=st.integers(min_value=1, max_value=4),
+        history_count=st.integers(min_value=1, max_value=100),
+    )
+    @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+    def test_combined_engine_scores_remain_finite_and_positive(
+        self,
+        freq_pairs: list[tuple[str, int]],
+        prefix_len: int,
+        history_count: int,
+    ) -> None:
+        """
+        The combined weighted score (FrequencyPredictor + HistoryPredictor)
+        must be finite and positive for all valid inputs.
+
+        This is a system-level invariant: the engine already enforces
+        finite scores via _apply_ranking(), but testing it here at the
+        predictor aggregation level catches bugs before they hit the
+        engine's invariant check.
+        """
+        import math
+
+        from aac.domain.history import History
+        from aac.domain.types import CompletionContext, WeightedPredictor
+        from aac.engine.engine import AutocompleteEngine
+        from aac.predictors.frequency import FrequencyPredictor
+        from aac.predictors.history import HistoryPredictor
+
+        frequencies = dict(freq_pairs)
+        history = History()
+
+        # Record some selections so HistoryPredictor has signal
+        for word, _ in freq_pairs[:3]:
+            if len(word) > prefix_len:
+                for _ in range(history_count):
+                    history.record(word[:prefix_len], word, timestamp=_FIXED_NOW)
+
+        engine = AutocompleteEngine(
+            predictors=[
+                WeightedPredictor(FrequencyPredictor(frequencies), weight=1.0),
+                WeightedPredictor(HistoryPredictor(history), weight=1.5),
+            ],
+            history=history,
+        )
+
+        for word, _ in freq_pairs[:5]:
+            if len(word) > prefix_len:
+                prefix = word[:prefix_len]
+                ctx = CompletionContext(prefix)
+                for s in engine.predict_scored(ctx):
+                    assert math.isfinite(s.score), (
+                        f"Non-finite combined score {s.score!r} for {s.value!r}"
+                    )
+                    assert s.score > 0, (
+                        f"Non-positive combined score {s.score!r} for {s.value!r}"
+                    )

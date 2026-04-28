@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from aac.domain.types import CompletionContext
@@ -18,11 +20,22 @@ def test_returns_words_matching_prefix(predictor: FrequencyPredictor) -> None:
 
 
 def test_scores_reflect_frequency(predictor: FrequencyPredictor) -> None:
+    """Scores are log-normalised: higher frequency → higher score, in (0, 1]."""
     results = predictor.predict(CompletionContext("he"))
     by_value = {r.suggestion.value: r.score for r in results}
-    assert by_value["hello"] == 10.0
-    assert by_value["help"] == 5.0
-    assert by_value["helium"] == 1.0
+
+    # Ordering must be preserved: hello > help > helium
+    assert by_value["hello"] > by_value["help"] > by_value["helium"]
+
+    # All scores must be in (0, 1]
+    for score in by_value.values():
+        assert 0.0 < score <= 1.0
+
+    # Score formula: log(1+freq) / log(1+max_freq), max_freq=20 (world)
+    log_max = math.log1p(20)
+    assert by_value["hello"] == pytest.approx(math.log1p(10) / log_max)
+    assert by_value["help"] == pytest.approx(math.log1p(5) / log_max)
+    assert by_value["helium"] == pytest.approx(math.log1p(1) / log_max)
 
 
 def test_does_not_return_non_matching_words(predictor: FrequencyPredictor) -> None:
@@ -47,19 +60,18 @@ def test_no_results_for_unknown_prefix(predictor: FrequencyPredictor) -> None:
     assert predictor.predict(CompletionContext("xyz")) == []
 
 
-def test_confidence_is_relative_to_max_frequency(predictor: FrequencyPredictor) -> None:
+def test_confidence_is_log_normalised(predictor: FrequencyPredictor) -> None:
+    """Confidence equals the log-normalised score (same value, different name)."""
     results = predictor.predict(CompletionContext("he"))
     by_value = {r.suggestion.value: r for r in results}
 
-    # FrequencyPredictor always populates explanation - assert non-None
-    # before accessing .confidence so the type checker knows it is safe.
     assert by_value["hello"].explanation is not None
     assert by_value["helium"].explanation is not None
 
-    # Confidence is relative to global max frequency (world=20), not the
-    # prefix-scoped max. hello (10/20=0.5), helium (1/20=0.05).
-    assert by_value["hello"].explanation.confidence == 10 / 20
-    assert by_value["helium"].explanation.confidence == 1 / 20
+    # Confidence == score for FrequencyPredictor (log-normalised)
+    for v in ("hello", "help", "helium"):
+        assert by_value[v].explanation is not None
+        assert by_value[v].explanation.confidence == pytest.approx(by_value[v].score)
 
 
 def test_insertion_order_does_not_affect_result_set() -> None:
@@ -97,10 +109,6 @@ class TestFrequencyPredictorIndexCorrectness:
         from aac.predictors.frequency import FrequencyPredictor
         vocab = {"hi": 10, "hello": 100}
         predictor = FrequencyPredictor(vocab)
-        # If the index contains "hi" as a key, exact-match filtering was done
-        # at query time (old behaviour) rather than at build time (correct).
-        # The key "hi" should not exist because range(1, len("hi")) = range(1,2) = [1]
-        # which only generates prefix "h", not "hi".
         assert "hi" not in predictor._index
         assert "hello" not in predictor._index
 
