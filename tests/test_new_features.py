@@ -75,7 +75,7 @@ def test_explain_async_returns_same_as_sync() -> None:
 
 
 def test_record_selection_async_learning_visible() -> None:
-    """record_selection_async() writes to engine history — visible in next suggest.
+    """record_selection_async() writes to engine history - visible in next suggest.
 
     Use a vocabulary where 'heap' (freq=40) is below 'heal' (freq=45) initially.
     After 5 recordings, heap should overtake heal.
@@ -178,7 +178,7 @@ def test_thread_safe_history_loads_from_existing() -> None:
 
 
 def test_thread_safe_history_snapshot_is_independent() -> None:
-    """snapshot_history() returns an independent copy — later writes don't affect it."""
+    """snapshot_history() returns an independent copy - later writes don't affect it."""
     ts = ThreadSafeHistory()
     ts.record("he", "hello")
 
@@ -190,7 +190,7 @@ def test_thread_safe_history_snapshot_is_independent() -> None:
 
 
 def test_thread_safe_history_is_history_subclass() -> None:
-    """ThreadSafeHistory is a drop-in replacement — passes isinstance checks."""
+    """ThreadSafeHistory is a drop-in replacement - passes isinstance checks."""
     ts = ThreadSafeHistory()
     assert isinstance(ts, History)
 
@@ -214,10 +214,10 @@ def test_symspell_recovers_deletion() -> None:
 
 
 def test_symspell_works_on_short_prefix() -> None:
-    """SymSpell works on 1-3 char prefixes — unlike TrigramPredictor."""
+    """SymSpell works on 1-3 char prefixes - unlike TrigramPredictor."""
     predictor = SymSpellPredictor(["he", "her", "here", "hello"], max_distance=1)
     from aac.domain.types import CompletionContext
-    # 'hx' is distance 1 from 'he' — should find it
+    # 'hx' is distance 1 from 'he' - should find it
     results = [s.suggestion.value for s in predictor.predict(CompletionContext("hx"))]
     assert "he" in results
 
@@ -234,7 +234,7 @@ def test_symspell_exact_match_distance_zero() -> None:
 def test_symspell_no_results_beyond_max_distance() -> None:
     predictor = SymSpellPredictor(["world"], max_distance=1)
     from aac.domain.types import CompletionContext
-    # 'xyz' is far from 'world' — should return empty
+    # 'xyz' is far from 'world' - should return empty
     results = predictor.predict(CompletionContext("xyz"))
     assert results == []
 
@@ -288,7 +288,7 @@ def test_symspell_empty_word_in_vocabulary_skipped() -> None:
 
 
 def test_symspell_empty_prefix_returns_empty() -> None:
-    """Empty prefix returns empty list — no suggestions possible."""
+    """Empty prefix returns empty list - no suggestions possible."""
     predictor = SymSpellPredictor(["hello", "help"], max_distance=1)
     from aac.domain.types import CompletionContext
     results = predictor.predict(CompletionContext(""))
@@ -339,7 +339,7 @@ def test_history_predictor_scores_in_unit_interval() -> None:
 def test_weight_semantics_with_normalised_scores() -> None:
     """
     With log-normalised scores, HistoryPredictor(weight=1.5) should override
-    FrequencyPredictor(weight=1.0) after a handful of selections — not thousands.
+    FrequencyPredictor(weight=1.0) after a handful of selections - not thousands.
     """
     from aac.domain.history import History
     from aac.domain.types import WeightedPredictor
@@ -493,7 +493,7 @@ def test_explain_as_dicts_includes_sources_and_components() -> None:
     dicts = engine.explain_as_dicts("he")
     by_value = {d["value"]: d for d in dicts}
 
-    # "help" was selected twice — it gets both predictor scores and a ranker boost.
+    # "help" was selected twice - it gets both predictor scores and a ranker boost.
     help_d = by_value["help"]
     assert "frequency" in help_d["base_components"], (
         f"base_components missing 'frequency': {help_d['base_components']}"
@@ -514,7 +514,7 @@ def test_explain_as_dicts_includes_sources_and_components() -> None:
     assert help_d["history_boost"] > 0
     assert "learning" in help_d["history_components"]
 
-    # "hello" has no history — only frequency in base_components
+    # "hello" has no history - only frequency in base_components
     hello_d = by_value["hello"]
     assert list(hello_d["base_components"].keys()) == ["frequency"]
     assert hello_d["history_components"] == {}

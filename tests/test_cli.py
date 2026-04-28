@@ -239,9 +239,9 @@ def test_broken_pipe_exits_cleanly(tmp_path: Path) -> None:
             except SystemExit as e:
                 exit_code = int(e.code) if e.code is not None else 0
             except BrokenPipeError:
-                exit_code = 1  # BrokenPipeError was not caught — test fails
+                exit_code = 1  # BrokenPipeError was not caught - test fails
 
-    # Must exit 0 — BrokenPipeError must not propagate as unhandled exception
+    # Must exit 0 - BrokenPipeError must not propagate as unhandled exception
     assert exit_code == 0, (
         f"BrokenPipeError was not caught: main() exited with code {exit_code}"
     )

@@ -305,7 +305,7 @@ class TestJsonStoreExceptionCleanup:
 
         fdopen takes ownership of the fd; the context manager (with ... as f:)
         closes it when the block exits.  Calling os.close again would be a
-        double-close — undefined behaviour.  We verify fd_owned_by_file=True
+        double-close - undefined behaviour.  We verify fd_owned_by_file=True
         prevents the explicit close.
         """
         import builtins
@@ -338,7 +338,7 @@ class TestJsonStoreExceptionCleanup:
             with pytest.raises(OSError, match="write error"):
                 store.save(history)
 
-        # os.close must NOT have been called — fdopen owned the fd
+        # os.close must NOT have been called - fdopen owned the fd
         assert close_calls == [], (
             f"os.close should not be called when fdopen succeeded; got calls for fds: {close_calls}"
         )

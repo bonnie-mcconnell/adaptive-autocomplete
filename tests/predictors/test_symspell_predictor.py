@@ -6,7 +6,7 @@ Core correctness property:
     words as a brute-force linear scan using the same Levenshtein distance
     function and the same max_distance threshold.
 
-SymSpell claims 100% recall — finds every word within max_distance
+SymSpell claims 100% recall - finds every word within max_distance
 Levenshtein edits with no false negatives. This file is the test that
 proves that claim rather than just asserting it.
 
@@ -14,7 +14,7 @@ The threat model for SymSpell's delete-neighbourhood approach:
     - Transpositions ("ab" → "ba"): edit distance 2 via two substitutions.
       SymSpell shares deleted forms between both, so these are covered.
     - Short queries (length 1-3): TrigramPredictor is blind here.
-      SymSpell has no minimum prefix length constraint — this is tested
+      SymSpell has no minimum prefix length constraint - this is tested
       explicitly since it is a documented advantage over TrigramPredictor.
     - Queries with no vocabulary match: must return empty, not crash.
     - Queries that exactly match vocabulary words: distance-0 matches must
@@ -179,7 +179,7 @@ class TestBruteForceEquivalence:
         "th",     # th → the (1 insert)
         # Single insertion (query is longer than target)
         "catt",   # catt → cat (1 delete)
-        # Exact match — must appear at distance 0
+        # Exact match - must appear at distance 0
         "cat",
         "world",
     ]
@@ -192,7 +192,7 @@ class TestBruteForceEquivalence:
         # Transposition: "ab" → "ba" is edit distance 2 (two subs).
         # SymSpell covers this via shared deleted forms.
         "wrold",
-        # Short prefix (1-3 chars) — TrigramPredictor cannot handle these;
+        # Short prefix (1-3 chars) - TrigramPredictor cannot handle these;
         # SymSpell must handle them correctly at any distance.
         "th",      # short: matches "the", "them", "then", "there"
         "ca",      # short: matches "cat", "car", "can"
@@ -232,7 +232,7 @@ class TestBruteForceEquivalence:
         Scale test: 500-word vocabulary covering realistic English words.
 
         Short queries (1-3 chars) are included here because TrigramPredictor
-        cannot handle them — verifying SymSpell's correctness at short prefix
+        cannot handle them - verifying SymSpell's correctness at short prefix
         lengths is the main reason to have SymSpell at all.
         """
         vocab = list(dict.fromkeys(_MEDIUM_VOCAB))  # deduplicate, preserve order
@@ -275,7 +275,7 @@ class TestBruteForceEquivalence:
     def test_exact_set_equality_exhaustive_small_vocab(self) -> None:
         """
         Complete correctness proof: for every vocabulary word used as a query,
-        SymSpellPredictor must return *exactly* the same set as brute force —
+        SymSpellPredictor must return *exactly* the same set as brute force -
         no false negatives (missing matches) and no false positives (extra words
         that are actually too far away).
 
@@ -337,14 +337,14 @@ class TestEdgeCasesForDeleteNeighbourhood:
     Cases that specifically stress the delete-neighbourhood construction.
 
     These are the failure modes that motivated writing SymSpell rather than
-    accepting the BK-tree's O(n) degradation — they must work correctly.
+    accepting the BK-tree's O(n) degradation - they must work correctly.
     """
 
     def test_transposition_covered_at_distance_2(self) -> None:
         """
         "ab" and "ba" have Levenshtein distance 2 (two substitutions).
         SymSpell covers this: deletes("ab") = {"a", "b"},
-        deletes("ba") = {"a", "b"} — they share all deleted forms.
+        deletes("ba") = {"a", "b"} - they share all deleted forms.
         """
         p = SymSpellPredictor(["ba", "bc", "ca"], max_distance=2)
         results = _symspell_words(p, "ab")

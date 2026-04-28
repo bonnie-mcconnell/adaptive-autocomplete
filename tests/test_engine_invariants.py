@@ -258,7 +258,7 @@ class TestEngineHistoryDivergence:
 def test_explain_and_predict_scored_return_same_order() -> None:
     """
     engine.explain() and engine.predict_scored() must return results in the
-    same order — both reflect the final ranked position.
+    same order - both reflect the final ranked position.
     """
     from aac.domain.history import History
     from aac.domain.types import CompletionContext, WeightedPredictor

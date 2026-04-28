@@ -282,7 +282,7 @@ def test_score_ranker_explain_handles_missing_explanation() -> None:
     """
     ScoreRanker.explain() must not crash when ScoredSuggestion.explanation is None.
     This branch fires when suggestions are constructed manually without a predictor
-    explanation — for example, in tests or custom predictor integrations.
+    explanation - for example, in tests or custom predictor integrations.
     """
     from aac.domain.types import ScoredSuggestion, Suggestion
     from aac.ranking.score import ScoreRanker

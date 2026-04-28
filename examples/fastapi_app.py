@@ -45,7 +45,7 @@ from aac.presets import create_engine
 from aac.storage.json_store import JsonHistoryStore
 
 # ---------------------------------------------------------------------------
-# Configuration — override with environment variables
+# Configuration - override with environment variables
 # ---------------------------------------------------------------------------
 
 HISTORY_PATH = Path(os.environ.get("AAC_HISTORY_PATH", "~/.aac_history.json")).expanduser()
@@ -53,7 +53,7 @@ PRESET = os.environ.get("AAC_PRESET", "production")
 DEFAULT_LIMIT = int(os.environ.get("AAC_DEFAULT_LIMIT", "10"))
 
 # ---------------------------------------------------------------------------
-# Application state — initialised in lifespan
+# Application state - initialised in lifespan
 # ---------------------------------------------------------------------------
 
 _store: JsonHistoryStore
@@ -65,10 +65,10 @@ def get_engine() -> AutocompleteEngine:
     Dependency-style accessor for the shared engine instance.
 
     Raises RuntimeError if called before the lifespan context has initialised
-    the engine — i.e. if called outside a running FastAPI application.
+    the engine - i.e. if called outside a running FastAPI application.
     """
     if _engine_instance is None:  # pragma: no cover
-        raise RuntimeError("Engine not initialised — lifespan not running")
+        raise RuntimeError("Engine not initialised - lifespan not running")
     return _engine_instance
 
 
@@ -176,7 +176,7 @@ async def save() -> dict[str, str]:
     Flush history to disk immediately.
 
     Normally history is saved on process shutdown. Call this endpoint
-    to persist mid-session — useful before scaling down or deploying.
+    to persist mid-session - useful before scaling down or deploying.
     """
     engine = get_engine()
     history = engine.history

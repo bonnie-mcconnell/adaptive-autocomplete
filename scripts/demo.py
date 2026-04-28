@@ -9,8 +9,8 @@ Shows four things:
 
 The learning demo uses a small controlled vocabulary so the score movement
 is visible after five selections. With the full 48k vocabulary, a single
-selection already lifts a word above most frequency-only candidates —
-log-normalised scores keep all predictors in the same (0, 1] scale —
+selection already lifts a word above most frequency-only candidates -
+log-normalised scores keep all predictors in the same (0, 1] scale -
 but the visual jump is less dramatic in a ranked list of 48k words.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ def _section_1_frequency() -> None:
 def _section_2_explain() -> None:
     _header("Score breakdown for 'he' (recency preset, after selecting 'hello' twice)")
     # Use the recency preset with two history selections so the boost column
-    # is non-zero for at least one row — otherwise score==base for every line
+    # is non-zero for at least one row - otherwise score==base for every line
     # and the explain output demonstrates nothing about how the system works.
     history = History()
     engine = create_engine("recency", history=history)
@@ -66,7 +66,7 @@ def _section_3_learning() -> None:
     # Small vocabulary so the frequency gap between words is narrow enough
     # that five selections visibly move 'her' past 'help'.
     # With DecayRanker(weight=100), five recent selections produce a boost
-    # of ~500 — enough to clear the frequency gap between 'her' (lowest
+    # of ~500 - enough to clear the frequency gap between 'her' (lowest
     # frequency) and 'help' (highest frequency).
     vocab = {
         "help": 500,
