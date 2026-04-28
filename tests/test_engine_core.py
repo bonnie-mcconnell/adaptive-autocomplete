@@ -37,7 +37,7 @@ def test_engine_aggregates_and_sorts() -> None:
     ])
     p2 = _FakePredictor("p2", [ScoredSuggestion(Suggestion("baz"), 0.5)])
     engine = AutocompleteEngine([p1, p2])
-    assert [s.value for s in engine.suggest("x")] == ["bar", "baz", "foo"]
+    assert engine.suggest("x") == ["bar", "baz", "foo"]
 
 
 def test_engine_combines_frequency_and_trie() -> None:
@@ -46,7 +46,7 @@ def test_engine_combines_frequency_and_trie() -> None:
         FrequencyPredictor({"hello": 10, "help": 1}),
     ])
     results = engine.suggest("he")
-    assert results[0].value == "hello"
+    assert results[0] == "hello"
 
 
 def test_engine_weighted_predictors_sum_scores() -> None:
@@ -82,9 +82,9 @@ def test_engine_adapts_after_selection() -> None:
         predictors=[StaticPrefixPredictor(["hello", "help"])],
         ranker=LearningRanker(history),
     )
-    assert [s.value for s in engine.suggest("he")] == ["hello", "help"]
+    assert engine.suggest("he") == ["hello", "help"]
     engine.record_selection("he", "help")
-    assert engine.suggest("he")[0].value == "help"
+    assert engine.suggest("he")[0] == "help"
 
 
 def test_engine_explain_does_not_mutate_history() -> None:
@@ -138,7 +138,7 @@ class TestRecordSelectionKeyCorrectness:
         )
 
         # Without any selection, hero should be last (lowest frequency)
-        before = [s.value for s in engine.suggest("he")]
+        before = engine.suggest("he")
         assert before.index("hero") > before.index("hello")
 
         # Record hero many times

@@ -108,12 +108,15 @@ def test_learning_ranker_rank_returns_boosted_scores() -> None:
 
 def test_learning_ranker_explain_uses_pre_boost_base_score() -> None:
     """
-    explain() must compute boosts against pre-ranking base scores.
+    LearningRanker.explain() is a boost-only method: it returns base_score=0
+    and history_boost equal to the boost it applied.
 
-    If explain() uses the post-ranked score (which already includes the boost)
-    as the base for recomputing the boost, the dominance cap fires at a
-    different threshold than it did during rank(), producing an explanation
-    that is arithmetically inconsistent with the actual ranking decision.
+    The full pre-ranking base score is surfaced by engine.explain(), which
+    derives it directly from _score() and is immune to ranker composition.
+    This test verifies:
+      1. ranker.explain() produces boost=5.0 (capped at 0.5 * pre-boost base)
+      2. ranker.explain() base_score=0.0 (boost ranker, not a base ranker)
+      3. engine.explain() surfaces base_score=10.0 (true predictor base)
     """
     from aac.domain.history import History
     from aac.domain.types import ScoredSuggestion, Suggestion
@@ -133,26 +136,60 @@ def test_learning_ranker_explain_uses_pre_boost_base_score() -> None:
 
     # rank() computes boost against pre-boost base_score=10.0:
     # raw_boost = 2 * 5.0 = 10.0; capped at 0.5 * 10.0 = 5.0
-    # hello final_score = 15.0
     ranked = ranker.rank("he", original)
     hello_ranked = next(s for s in ranked if s.suggestion.value == "hello")
     assert hello_ranked.score == 15.0
 
-    # explain() must also compute boost against base_score=10.0 (pre-boost),
-    # NOT against 15.0 (post-boost). Using 15.0 would give:
-    # cap = 0.5 * 15.0 = 7.5 -> boost = 7.5 -> final = 22.5 (WRONG)
+    # ranker.explain() is a boost-only method: base=0, boost=delta
     exps = ranker.explain("he", original)
     hello_exp = next(e for e in exps if e.value == "hello")
 
-    assert hello_exp.base_score == 10.0, (
-        f"explain() must use pre-boost base_score=10.0, got {hello_exp.base_score}"
+    assert hello_exp.base_score == 0.0, (
+        "LearningRanker is a boost ranker; base_score must be 0 "
+        f"(full base is in engine.explain()), got {hello_exp.base_score}"
     )
     assert hello_exp.history_boost == 5.0, (
         f"boost must be capped at 0.5*10.0=5.0, got {hello_exp.history_boost}"
     )
-    assert hello_exp.final_score == 15.0, (
-        f"final must be 15.0, got {hello_exp.final_score}"
+    assert hello_exp.final_score == 5.0, (
+        f"ranker explain final = boost only = 5.0, got {hello_exp.final_score}"
     )
+
+
+def test_engine_explain_shows_correct_base_score_with_learning_ranker() -> None:
+    """
+    engine.explain() must show the true pre-ranking predictor score as base_score,
+    regardless of which rankers are composed.
+    """
+    from aac.domain.history import History
+    from aac.engine.engine import AutocompleteEngine
+    from aac.predictors.static_prefix import StaticPrefixPredictor
+    from aac.ranking.learning import LearningRanker
+
+    history = History()
+    history.record("he", "help")
+
+    engine = AutocompleteEngine(
+        predictors=[StaticPrefixPredictor(["hello", "help", "hero"])],
+        ranker=LearningRanker(history, boost=1.0),
+        history=history,
+    )
+
+    exps = {e.value: e for e in engine.explain("he")}
+
+    # help has a history boost; its base_score must be the predictor score (1.0),
+    # not 0.0 (what LearningRanker.explain() would return in isolation).
+    assert exps["help"].base_score == 1.0, (
+        f"engine.explain() base_score must be predictor score 1.0, got {exps['help'].base_score}"
+    )
+    assert exps["help"].history_boost == 1.0, (
+        f"history_boost must equal the LearningRanker boost, got {exps['help'].history_boost}"
+    )
+    assert exps["help"].final_score == 2.0
+
+    # hello has no history; base_score is the predictor score, boost=0
+    assert exps["hello"].base_score == 1.0
+    assert exps["hello"].history_boost == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -239,3 +276,22 @@ class TestDecayRankerStabilityAndTrace:
 
         result = ranker.rank("he", suggestions)
         assert len(result[0].trace) == 0
+
+
+def test_score_ranker_explain_handles_missing_explanation() -> None:
+    """
+    ScoreRanker.explain() must not crash when ScoredSuggestion.explanation is None.
+    This branch fires when suggestions are constructed manually without a predictor
+    explanation — for example, in tests or custom predictor integrations.
+    """
+    from aac.domain.types import ScoredSuggestion, Suggestion
+    from aac.ranking.score import ScoreRanker
+
+    s = ScoredSuggestion(Suggestion("hello"), score=0.8)
+    assert s.explanation is None  # confirm the setup
+
+    exps = ScoreRanker().explain("he", [s])
+    assert len(exps) == 1
+    assert exps[0].value == "hello"
+    assert exps[0].base_score == 0.8
+    assert exps[0].source == "score"  # fallback label when explanation is absent

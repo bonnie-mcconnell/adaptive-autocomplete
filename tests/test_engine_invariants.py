@@ -41,7 +41,7 @@ def test_engine_aggregates_and_sorts() -> None:
     ])
     p2 = _FakePredictor("p2", [ScoredSuggestion(Suggestion("baz"), 0.5)])
     engine = AutocompleteEngine([p1, p2])
-    assert [s.value for s in engine.suggest("x")] == ["bar", "baz", "foo"]
+    assert engine.suggest("x") == ["bar", "baz", "foo"]
 
 
 def test_engine_combines_frequency_and_trie() -> None:
@@ -50,7 +50,7 @@ def test_engine_combines_frequency_and_trie() -> None:
         FrequencyPredictor({"hello": 10, "help": 1}),
     ])
     results = engine.suggest("he")
-    assert results[0].value == "hello"
+    assert results[0] == "hello"
 
 
 def test_engine_weighted_predictors_sum_scores() -> None:
@@ -86,9 +86,9 @@ def test_engine_adapts_after_selection() -> None:
         predictors=[StaticPrefixPredictor(["hello", "help"])],
         ranker=LearningRanker(history),
     )
-    assert [s.value for s in engine.suggest("he")] == ["hello", "help"]
+    assert engine.suggest("he") == ["hello", "help"]
     engine.record_selection("he", "help")
-    assert engine.suggest("he")[0].value == "help"
+    assert engine.suggest("he")[0] == "help"
 
 
 def test_engine_explain_does_not_mutate_history() -> None:
@@ -253,3 +253,77 @@ class TestEngineHistoryDivergence:
         # Should return scored suggestions without ranking order enforced
         assert len(unranked) > 0
         assert all(hasattr(s, "score") for s in unranked)
+
+
+def test_explain_and_predict_scored_return_same_order() -> None:
+    """
+    engine.explain() and engine.predict_scored() must return results in the
+    same order — both reflect the final ranked position.
+    """
+    from aac.domain.history import History
+    from aac.domain.types import CompletionContext, WeightedPredictor
+    from aac.engine.engine import AutocompleteEngine
+    from aac.predictors.frequency import FrequencyPredictor
+    from aac.predictors.history import HistoryPredictor
+    from aac.ranking.learning import LearningRanker
+    from aac.ranking.score import ScoreRanker
+
+    history = History()
+    history.record("he", "help")
+    history.record("he", "help")
+
+    engine = AutocompleteEngine(
+        predictors=[
+            WeightedPredictor(FrequencyPredictor({"hello": 1000, "help": 50, "hero": 200}), weight=1.0),
+            WeightedPredictor(HistoryPredictor(history), weight=1.5),
+        ],
+        ranker=[ScoreRanker(), LearningRanker(history)],
+        history=history,
+    )
+
+    ctx = CompletionContext("he")
+    scored_order = [s.value for s in engine.predict_scored(ctx)]
+    explain_order = [e.value for e in engine.explain("he")]
+
+    assert scored_order == explain_order, (
+        f"predict_scored order {scored_order} != explain order {explain_order}"
+    )
+
+
+def test_explain_base_components_sum_equals_base_score() -> None:
+    """
+    For every explanation, sum(base_components.values()) must equal base_score.
+
+    base_components is the per-predictor breakdown of the aggregated predictor
+    score. Its values must sum to the total base_score exactly, otherwise the
+    breakdown is misleading.
+    """
+    import math
+
+    from aac.domain.history import History
+    from aac.domain.types import WeightedPredictor
+    from aac.engine.engine import AutocompleteEngine
+    from aac.predictors.frequency import FrequencyPredictor
+    from aac.predictors.history import HistoryPredictor
+    from aac.ranking.decay import DecayFunction, DecayRanker
+    from aac.ranking.score import ScoreRanker
+
+    history = History()
+    history.record("he", "help")
+    history.record("he", "help")
+
+    engine = AutocompleteEngine(
+        predictors=[
+            WeightedPredictor(FrequencyPredictor({"hello": 1000, "help": 50, "hero": 200}), weight=1.0),
+            WeightedPredictor(HistoryPredictor(history), weight=1.5),
+        ],
+        ranker=[ScoreRanker(), DecayRanker(history, DecayFunction(half_life_seconds=3600), weight=2.0)],
+        history=history,
+    )
+
+    for exp in engine.explain("he"):
+        component_sum = sum(exp.base_components.values())
+        assert math.isclose(component_sum, exp.base_score, rel_tol=1e-9), (
+            f"{exp.value}: sum(base_components)={component_sum:.6f} "
+            f"!= base_score={exp.base_score:.6f}"
+        )

@@ -81,9 +81,15 @@ def test_explain_does_not_mutate_history() -> None:
 
 
 def test_explain_as_dicts_schema() -> None:
+    """
+    LearningRanker.explain_as_dicts() reflects the boost-ranker contract:
+    base_score=0.0 (the ranker contributes boost, not base),
+    history_boost=0.0 (no history for this prefix), final_score=0.0.
+    Use engine.explain_as_dicts() for full base+boost breakdowns.
+    """
     ranker = LearningRanker(History())
     rows = ranker.explain_as_dicts("he", _suggestions("hello", score=0.5))
-    assert rows == [{"value": "hello", "base_score": 0.5, "history_boost": 0.0, "final_score": 0.5}]
+    assert rows == [{"value": "hello", "base_score": 0.0, "history_boost": 0.0, "final_score": 0.0}]
 
 
 # ------------------------------------------------------------------
@@ -129,7 +135,7 @@ def test_history_learning_boosts_selected_value() -> None:
         history=history,
     )
 
-    before_values = [s.value for s in engine.suggest("he")]
+    before_values = engine.suggest("he")
     assert "hero" in before_values, "hero must appear in results before recording"
     before_pos = before_values.index("hero")
 
@@ -138,7 +144,7 @@ def test_history_learning_boosts_selected_value() -> None:
     history.record("he", "hero")
     history.record("he", "hero")
 
-    after_values = [s.value for s in engine.suggest("he")]
+    after_values = engine.suggest("he")
     assert "hero" in after_values
     assert after_values.index("hero") < before_pos, (
         f"Expected hero to rise from position {before_pos}, "
