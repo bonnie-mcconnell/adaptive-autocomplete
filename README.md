@@ -3,7 +3,7 @@
 ![CI](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions/workflows/ci.yml/badge.svg)
 [![PyPI](https://img.shields.io/pypi/v/adaptive-autocomplete)](https://pypi.org/project/adaptive-autocomplete/)
 
-Autocomplete engine built from scratch in Python - candidate generation, frequency ranking, typo recovery, learning from user selections, and per-suggestion score explanations.
+Autocomplete engine built from scratch in Python with candidate generation, frequency ranking, typo recovery, learning from user selections, and per-suggestion score explanations.
 
 I built it to understand what ranking infrastructure actually looks like underneath the ML layer: how candidates get generated, scored, merged across predictors, reordered by rankers, and explained back to the caller. The first version was a single function. It became this when I tried to write a test for the learning behaviour and discovered there was no seam to inject a controlled history.
 
@@ -108,9 +108,9 @@ $ aac --preset production suggest programing
 programming
 ```
 
-Learning works, but with a 48k vocabulary the frequency scores reach 20,000 - a low-frequency word needs hundreds of selections before it rises visibly in the rankings. That is correct behaviour for a real application. `make demo` shows learning using a small controlled vocabulary where the boost is proportional to the score gap, so movement is visible after five selections.
+Learning works, but with a 48k vocabulary the frequency scores reach 20,000. A low-frequency word needs hundreds of selections before it rises visibly in the rankings. That is correct behaviour for a real application. `make demo` shows learning using a small controlled vocabulary where the boost is proportional to the score gap, so movement is visible after five selections.
 
-In the `default` preset, learning happens at the **prediction** layer - `HistoryPredictor` emits history-scored candidates weighted and aggregated with frequency scores before ranking. The `recency` and `production` presets apply `DecayRanker` at ranking time instead, which is why their `recency` column is non-zero in `explain` output.
+In the `default` preset, learning happens at the **prediction** layer. `HistoryPredictor` emits history-scored candidates weighted and aggregated with frequency scores before ranking. The `recency` and `production` presets apply `DecayRanker` at ranking time instead, which is why their `recency` column is non-zero in `explain` output.
 
 History persists across restarts with full ISO 8601 timestamps, so decay-based presets remain accurate after reload.
 
@@ -128,7 +128,7 @@ On the surface they look like one thing: text goes in, ordered suggestions come 
 
 Separating them means each layer has a single job. A predictor can be replaced without touching the learning logic. The engine stays thin - it orchestrates, it doesn't contain scoring or ordering logic. And the layers can be tested independently, which matters when debugging why a particular word appeared where it did.
 
-The tradeoff is more code than a single entangled function. It's worth it because prediction and ranking can be tested in complete isolation - something that was impossible when they were the same thing.
+The tradeoff is more code than a single entangled function. It's worth it because prediction and ranking can be tested in complete isolation, something that was impossible when they were the same thing.
 
 ---
 
@@ -144,7 +144,7 @@ Five operating modes. **If you don't know which to use, use `production`.**
 | `production` | Yes (decay) | Yes (trigram) | 48k+ words | **Recommended default** |
 | `robust` | Yes (decay) | Yes (BK-tree) | Small only | Exact recall on curated small vocab |
 
-`production` uses a trigram index for approximate matching. At `max_distance=2` over 48k words it takes ~600µs/call - 100x faster than the BK-tree at the same scale. The constraint: trigram matching requires prefix length ≥ 4. For 1–3 character prefixes only frequency and history signals apply.
+`production` uses a trigram index for approximate matching. At `max_distance=2` over 48k words it takes ~600µs/call, which is 100x faster than the BK-tree at the same scale. The constraint: trigram matching requires prefix length ≥ 4. For 1–3 character prefixes only frequency and history signals apply.
 
 `robust` uses a BK-tree, which gives exact recall but degrades to O(n) at `max_distance=2` with short prefixes over large vocabularies. Use it with a curated vocabulary of a few hundred words, or when exact recall on every query is required.
 
@@ -197,9 +197,9 @@ Run `make benchmark` to reproduce.
 
 **Why `FrequencyPredictor` is fast at scale.** The prefix index is pre-sorted by frequency at construction time. With 2,332 words starting with "t" in a 48k vocabulary, an unsorted index would require sorting all 2,332 candidates on every keystroke. Pre-sorting at build time reduces `predict()` to a top-N slice - O(max_results), not O(matching_words). Construction is slower, but construction happens once.
 
-**Why `TrigramPredictor` beats `BK-tree` at scale.** The BK-tree exploits the triangle inequality to prune subtrees without visiting them. In theory this gives O(log n) average search time. In practice, at `max_distance=2` with short prefixes, the search ball covers most of the vocabulary's metric space and pruning becomes ineffective - degrading toward O(n).
+**Why `TrigramPredictor` beats `BK-tree` at scale.** The BK-tree exploits the triangle inequality to prune subtrees without visiting them. In theory this gives O(log n) average search time. In practice, at `max_distance=2` with short prefixes, the search ball covers most of the vocabulary's metric space and pruning becomes ineffective, degrading toward O(n).
 
-The trigram index takes a different approach: precompute which words share character trigrams with the query, filter to a shortlist of ~20–100 candidates, then run exact Levenshtein only on that shortlist. Shortlist size scales with trigram overlap, not vocabulary size - so latency is effectively independent of vocabulary size above the threshold where trigrams provide discrimination (prefix length ≥ 4).
+The trigram index takes a different approach: precompute which words share character trigrams with the query, filter to a shortlist of ~20–100 candidates, then run exact Levenshtein only on that shortlist. Shortlist size scales with trigram overlap, not vocabulary size, so latency is effectively independent of vocabulary size above the threshold where trigrams provide discrimination (prefix length ≥ 4).
 
 ---
 
@@ -239,10 +239,10 @@ The test suite covers correctness properties rather than just happy paths:
 
 ## Why I built this
 
-I wanted to understand what a real ranking system looks like from the inside - not the ML layer on top, but the infrastructure underneath it: how candidates get generated, scored, merged, reordered, and explained.
+I wanted to understand what a real ranking system looks like from the inside, not the ML layer on top, but the infrastructure underneath it: how candidates get generated, scored, merged, reordered, and explained.
 
-The first version was a single function. It worked until I tried to write a test for the learning behaviour and hit a wall: there was no seam to inject a controlled history, so I couldn't isolate what I was testing. The split into prediction and ranking layers came from that problem, not from a design document.
+The first version was a single function. It worked until I tried to write a test for the learning behaviour and hit a wall. There was no seam to inject a controlled history, so I couldn't isolate what I was testing. The split into prediction and ranking layers came from that problem, not from a design document.
 
-The `explain()` bug took an embarrassingly long time to find. The invariant `final_score == base_score + history_boost` was satisfied - the numbers added up - but the engine was passing post-ranking scores into each ranker's `explain()` instead of the pre-ranking baseline. `DecayRanker` was explaining a boost it had already applied. The arithmetic checked out; the semantics were wrong. The fix required reasoning about what each number was supposed to *mean*, not just whether it was correct.
+The `explain()` bug. The invariant `final_score == base_score + history_boost` was satisfied - the numbers added up - but the engine was passing post-ranking scores into each ranker's `explain()` instead of the pre-ranking baseline. `DecayRanker` was explaining a boost it had already applied. The arithmetic checked out; the semantics were wrong. The fix required reasoning about what each number was supposed to *mean*, not just whether it was correct.
 
-The performance problem was different. I had a prefix index and thought it was fast. Then I switched from a 312-word toy vocabulary to 48,032 real words and the latency went from 65µs to 4ms. The index was correct - O(prefix_length) lookup - but it was returning all matching candidates unsorted, so the ranker was sorting 2,332 words on every keystroke for the prefix "t". Pre-sorting the index at construction time is obvious once you see it. The BK-tree problem was less obvious: it's theoretically O(log n), the implementation is correct, but the pruning guarantee depends on the search ball being small relative to the vocabulary. At `max_distance=2` with short prefixes, the search ball covers most of the metric space and the log n bound falls apart. Understanding that required reading the original 1973 paper, not just measuring the latency.
+The performance problem was different. I had a prefix index and thought it was fast. Then I switched from a 312-word toy vocabulary to 48,032 real words and the latency went from 65µs to 4ms. The index was correct at O(prefix_length) lookup, but it was returning all matching candidates unsorted, so the ranker was sorting 2,332 words on every keystroke for the prefix "t". Pre-sorting the index at construction time is obvious once you see it. The BK-tree problem was less obvious: it's theoretically O(log n), the implementation is correct, but the pruning guarantee depends on the search ball being small relative to the vocabulary. At `max_distance=2` with short prefixes, the search ball covers most of the metric space and the log n bound falls apart. Understanding that required reading the original 1973 paper, not just measuring the latency.
