@@ -31,26 +31,36 @@ Or compose a custom engine directly:
 from __future__ import annotations
 
 from aac.domain.history import History
+from aac.domain.thread_safe_history import ThreadSafeHistory
 from aac.domain.types import (
     CompletionContext,
     Predictor,
     ScoredSuggestion,
-    Suggestion,
     WeightedPredictor,
 )
 from aac.engine.engine import AutocompleteEngine
 from aac.presets import create_engine, get_preset
 from aac.ranking.explanation import RankingExplanation
+from aac.storage.json_store import JsonHistoryStore
+from aac.vocabulary import (
+    vocabulary_from_file,
+    vocabulary_from_text,
+    vocabulary_from_wordlist,
+)
 
 __all__ = [
     "AutocompleteEngine",
     "CompletionContext",
     "History",
+    "JsonHistoryStore",
     "Predictor",
     "RankingExplanation",
     "ScoredSuggestion",
-    "Suggestion",
+    "ThreadSafeHistory",
     "WeightedPredictor",
     "create_engine",
     "get_preset",
+    "vocabulary_from_file",
+    "vocabulary_from_text",
+    "vocabulary_from_wordlist",
 ]
