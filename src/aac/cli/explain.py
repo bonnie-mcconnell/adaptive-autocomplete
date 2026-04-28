@@ -16,6 +16,18 @@ def run(
     top-ranked suggestion's score, so the relative contribution of
     each signal is readable at a glance.
 
+    Column meanings:
+        score   - final ranked score (base + ranker boosts)
+        base    - aggregated predictor score before ranking
+                  (sum of all predictor contributions: frequency,
+                  history predictor, typo correction, etc.)
+        boost   - total ranker boost applied on top of the base score
+                  (from LearningRanker, DecayRanker, etc.)
+
+    Use ``engine.explain_as_dicts()`` for a per-predictor breakdown
+    of the base score (``base_components``) and per-ranker breakdown
+    of the boost (``history_components``).
+
     This is a presentation-layer adapter:
     - No scoring logic lives here
     - Output is intentionally human-readable
@@ -31,12 +43,10 @@ def run(
 
     for exp in explanations:
         pct = (exp.final_score / max_score) * 100
-        boost = exp.history_boost
-        boost_str = f"+{boost:.2f}" if boost > 0 else f" {boost:.2f}"
 
         print(
             f"{exp.value:14} "
             f"score={exp.final_score:9.2f} ({pct:5.1f}%)  "
-            f"freq={exp.base_score:9.2f}  "
-            f"recency={boost_str}"
+            f"base={exp.base_score:9.2f}  "
+            f"boost={exp.history_boost:+.2f}"
         )

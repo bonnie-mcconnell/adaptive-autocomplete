@@ -11,4 +11,4 @@ def run(*, engine: AutocompleteEngine, text: str, limit: int) -> None:
         return
 
     for suggestion in suggestions:
-        print(suggestion.value)
+        print(suggestion)
