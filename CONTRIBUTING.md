@@ -6,16 +6,29 @@
 git clone https://github.com/bonnie-mcconnell/adaptive-autocomplete
 cd adaptive-autocomplete
 make install
+
+# Activate the virtualenv to use 'aac' directly:
+source .venv/bin/activate       # Linux/macOS
+# .venv\Scripts\activate        # Windows PowerShell
+
+# Or prefix any command with 'poetry run':
+poetry run aac suggest he
 ```
 
 ## Development workflow
 
 ```bash
-make test       # run full test suite with coverage
+make test-fast  # unit tests only - fast, no subprocess overhead (~30s)
+make test       # full suite including integration tests (~90s)
 make lint       # ruff check
 make typecheck  # mypy --strict
-make check      # lint + typecheck + test (run before every commit)
+make check      # lint + typecheck + full test suite (run before every commit)
 ```
+
+Integration tests are marked with `@pytest.mark.integration` and invoke the
+CLI as a subprocess. They are slow but exercise the full stack end-to-end.
+Run them before opening a PR. CI runs unit tests on every push and the full
+suite on every pull request.
 
 ## Adding a predictor
 
