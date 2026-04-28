@@ -185,6 +185,3 @@ def levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
-# Keep private alias for backward compatibility with any code that
-# imported _levenshtein directly. Will be removed in a future version.
-_levenshtein = levenshtein

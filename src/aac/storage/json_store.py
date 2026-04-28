@@ -112,12 +112,24 @@ class JsonHistoryStore(HistoryStore):
             prefix=".aac_history_",
             suffix=".tmp",
         )
+        # Track whether os.fdopen() has taken ownership of fd.
+        # If fdopen raises, fd is still open (on Windows an open file cannot
+        # be unlinked). We must close it explicitly before calling unlink.
+        fd_owned_by_file = False
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd_owned_by_file = True   # f now owns fd; closing f closes it
                 f.write(content)
             # Atomic replace: old file visible until new file is complete.
             Path(tmp_path_str).replace(self._path)
         except Exception:
+            if not fd_owned_by_file:
+                # fdopen raised before taking ownership - close the raw fd
+                # so that unlink can succeed on Windows (mandatory file locks).
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
                 os.unlink(tmp_path_str)
             except OSError:

@@ -103,7 +103,6 @@ class TrigramIndex:
                 raw[tg].append(word)
 
         self._index: dict[str, list[str]] = dict(raw)
-        self._size = sum(len(raw.get(tg, [])) for tg in raw) // max(len(raw), 1)
 
     def candidates(
         self,
