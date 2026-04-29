@@ -120,6 +120,36 @@ def _section_4_typo() -> None:
     assert "programming" in results, "programming not found - typo recovery failed"
 
 
+def _section_5_custom_vocabulary() -> None:
+    _header("Custom vocabulary: domain-specific autocomplete")
+    # The most common real use case: you have your own word list.
+    # vocabulary_from_wordlist() gives you a frequency dict from any iterable.
+    from aac.vocabulary import vocabulary_from_wordlist
+
+    commands = [
+        "git commit", "git push", "git pull", "git status",
+        "git checkout", "git branch", "git merge", "git log",
+        "git diff", "git stash",
+    ]
+    vocab = vocabulary_from_wordlist(commands)
+    engine = create_engine("default", vocabulary=vocab)
+
+    print("  vocabulary: git commands only")
+    print(f"  suggest('git')  → {engine.suggest('git')}")
+    print(f"  suggest('git c') → prefix='c' → {engine.suggest('git c')}")
+    print()
+    print("  Note: CompletionContext uses the last word as prefix.")
+    print("  'git c' → last word is 'c' → no commands start with 'c' alone.")
+    print("  Type 'git' (one word) to match all 'git *' commands.")
+
+    # Record a selection and show learning works with custom vocab too
+    engine.record_selection("git", "git status")
+    engine.record_selection("git", "git status")
+    after = engine.suggest("git")
+    print(f"\n  After 2× 'git status': {after[:3]}")
+    assert after[0] == "git status", f"expected git status first, got {after[0]}"
+
+
 if __name__ == "__main__":
     print("adaptive-autocomplete demo")
     print("=" * _W)
@@ -127,5 +157,6 @@ if __name__ == "__main__":
     _section_2_explain()
     _section_3_learning()
     _section_4_typo()
+    _section_5_custom_vocabulary()
     print(f"\n{'─' * _W}")
     print("Done. Run 'make benchmark' for latency numbers.")
