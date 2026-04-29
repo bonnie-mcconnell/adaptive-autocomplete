@@ -139,6 +139,10 @@ All notable changes to this project are documented here.
 - FastAPI example (`examples/fastapi_app.py`) now referenced in README Quick start section.
 - Migration guide in README for 0.2.x → 0.3.0 breaking changes.
 - `SymSpellPredictor` added to predictor contract test suite (`TestSymSpellPredictorContract`).
+- **`aac history` CLI subcommand** - shows what the engine has learned.
+  `aac history` prints a summary of all prefixes (total selections, top completion).
+  `aac history <prefix>` shows per-value counts and recency ("5s ago", "2h ago")
+  for that prefix, sorted by count descending. 5 tests.
 - **`aac.vocabulary` module** with three utilities for building frequency vocabularies
   from common input formats, replacing the requirement to hand-construct `{word: int}` dicts:
   - `vocabulary_from_wordlist(words)` - plain word/phrase list, all words get equal weight.

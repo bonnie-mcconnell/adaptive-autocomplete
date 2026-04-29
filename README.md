@@ -3,7 +3,14 @@
 ![CI](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions/workflows/ci.yml/badge.svg)
 [![PyPI](https://img.shields.io/pypi/v/adaptive-autocomplete)](https://pypi.org/project/adaptive-autocomplete/)
 
-Autocomplete engine built from scratch in Python - candidate generation, frequency ranking, typo recovery, learning from user selections, and per-suggestion score explanations.
+Adaptive autocomplete engine with per-suggestion explanations - every ranking decision is mathematically auditable. Frequency ranking, typo recovery, and learning from user selections, built from scratch in Python.
+
+```python
+engine.suggest("helo")           # → ["hello", "help", "held", ...]
+engine.record_selection("helo", "hello")   # learns immediately
+engine.explain("helo")[0]
+# RankingExplanation(value='hello', base=1.4063, boost=+1.5000, final=2.9063)
+```
 
 I built it to understand what ranking infrastructure actually looks like underneath the ML layer: how candidates get generated, scored, merged across predictors, reordered by rankers, and explained back to the caller. The first version was a single function. It became this when I tried to write a test for the learning behaviour and discovered there was no seam to inject a controlled history.
 
@@ -21,6 +28,8 @@ pip install adaptive-autocomplete
 aac suggest he                               # completions ranked by frequency
 aac explain he                               # score breakdown per suggestion
 aac record he hero                           # record a selection - engine learns
+aac history                                  # show what the engine has learned
+aac history he                               # selection counts for prefix 'he'
 aac --preset production suggest programing   # typo recovery: programing → programming
 ```
 
@@ -195,30 +204,6 @@ dicts = engine.explain_as_dicts("hel")
 
 ---
 
-## Migrating from 0.2.x to 0.3.0
-
-### Breaking changes
-
-**Score values changed.** `FrequencyPredictor` and `HistoryPredictor` previously emitted raw counts as scores (e.g. `50000.0` for "the"). They now emit log-normalised scores in `(0, 1]`. This affects `ScoredSuggestion.score` and `RankingExplanation.base_score`. **Suggestion ordering is preserved** - only the numeric values changed.
-
-If you compare scores against hardcoded thresholds, update them. The new formula is `log(1 + freq) / log(1 + max_freq)`.
-
-**`WeightedPredictor` rejects `weight <= 0`.** Previously accepted silently. Now raises `ValueError` at construction. Remove zero-weight predictors from your predictor list instead.
-
-**`ThreadSafeHistory.lock` type changed** from `threading.Lock` to `threading.Condition`. `isinstance(ts.lock, threading.Lock)` is now `False`. If you use `with ts.lock:` for compound operations, it still works - `Condition` supports the context manager protocol.
-
-**`History.snapshot()` is soft-deprecated.** It still works but its docstring now carries a deprecation notice. Use `snapshot_counts()` for the same result, or `JsonHistoryStore.save()` for persistence.
-
-### Non-breaking changes
-
-`JsonHistoryStore` is now exported from the top-level `aac` package: `from aac import JsonHistoryStore`.
-
-`History.snapshot_counts()` added as an explicit-name alias for `snapshot()`.
-
-`engine.explain_as_dicts()` now returns richer dicts with `sources`, `base_components`, and `history_components` fields alongside the existing `value`, `base_score`, `history_boost`, `final_score`.
-
----
-
 ```
 $ aac suggest he
 her
@@ -239,6 +224,20 @@ help           score=     0.65 ( 87.2%)  base=     0.65  boost=+0.00
 head           score=     0.61 ( 81.6%)  base=     0.61  boost=+0.00
 health         score=     0.60 ( 80.0%)  base=     0.60  boost=+0.00
 ...
+
+$ aac record he hello && aac record he hello && aac record he help
+Recorded selection 'hello' for input 'he'
+Recorded selection 'hello' for input 'he'
+Recorded selection 'help' for input 'he'
+
+$ aac history he
+History for prefix 'he':
+  Value                     Count  Last selected
+  ──────────────────────────────────────────────────
+  hello                         2  5s ago
+  help                          1  2s ago
+
+  Total: 3 selections for 'he'.
 
 $ aac --preset production suggest programing
 programming
@@ -373,7 +372,31 @@ The test suite covers correctness properties rather than just happy paths:
   - `LearningRanker` and `DecayRanker` never add or remove candidates, across arbitrary suggestion lists and history states
   - History prefix index always agrees with brute-force full scan, regardless of insertion order or prefix distribution
 
-373 tests (366 unit, 7 integration). Integration tests are marked `@pytest.mark.integration` and invoke the CLI as a subprocess - run with `make test`, skipped with `make test-fast`. CI runs unit tests on every push and the full suite on every pull request, on Linux (Python 3.10–3.13) and Windows (Python 3.11–3.12) via GitHub Actions.
+378 tests (371 unit, 7 integration). Integration tests are marked `@pytest.mark.integration` and invoke the CLI as a subprocess - run with `make test`, skipped with `make test-fast`. CI runs unit tests on every push and the full suite on every pull request, on Linux (Python 3.10–3.13) and Windows (Python 3.11–3.12) via GitHub Actions.
+
+---
+
+## Migrating from 0.2.x to 0.3.0
+
+### Breaking changes
+
+**Score values changed.** `FrequencyPredictor` and `HistoryPredictor` previously emitted raw counts as scores (e.g. `50000.0` for "the"). They now emit log-normalised scores in `(0, 1]`. This affects `ScoredSuggestion.score` and `RankingExplanation.base_score`. **Suggestion ordering is preserved** - only the numeric values changed.
+
+If you compare scores against hardcoded thresholds, update them. The new formula is `log(1 + freq) / log(1 + max_freq)`.
+
+**`WeightedPredictor` rejects `weight <= 0`.** Previously accepted silently. Now raises `ValueError` at construction. Remove zero-weight predictors from your predictor list instead.
+
+**`ThreadSafeHistory.lock` type changed** from `threading.Lock` to `threading.Condition`. `isinstance(ts.lock, threading.Lock)` is now `False`. If you use `with ts.lock:` for compound operations, it still works - `Condition` supports the context manager protocol.
+
+**`History.snapshot()` is soft-deprecated.** It still works but its docstring now carries a deprecation notice. Use `snapshot_counts()` for the same result, or `JsonHistoryStore.save()` for persistence.
+
+### Non-breaking changes
+
+`JsonHistoryStore` is now exported from the top-level `aac` package: `from aac import JsonHistoryStore`.
+
+`History.snapshot_counts()` added as an explicit-name alias for `snapshot()`.
+
+`engine.explain_as_dicts()` now returns richer dicts with `sources`, `base_components`, and `history_components` fields alongside the existing `value`, `base_score`, `history_boost`, `final_score`.
 
 ---
 
