@@ -314,3 +314,53 @@ class TestVocabPathFlag:
         )
         assert code == 0
         assert "score=" in out
+
+
+class TestHistorySubcommand:
+    """CLI 'aac history' subcommand."""
+
+    def test_history_empty(self, tmp_path: Path) -> None:
+        code, out = _run("history", history_path=tmp_path / "h.json")
+        assert code == 0
+        assert "No history recorded" in out
+
+    def test_history_summary_after_records(self, tmp_path: Path) -> None:
+        hp = tmp_path / "h.json"
+        _run("record", "he", "hello", history_path=hp)
+        _run("record", "he", "hello", history_path=hp)
+        _run("record", "he", "help", history_path=hp)
+        _run("record", "pro", "programming", history_path=hp)
+
+        code, out = _run("history", history_path=hp)
+        assert code == 0
+        assert "he" in out
+        assert "pro" in out
+        assert "hello" in out
+
+    def test_history_prefix_breakdown(self, tmp_path: Path) -> None:
+        hp = tmp_path / "h.json"
+        _run("record", "he", "hello", history_path=hp)
+        _run("record", "he", "hello", history_path=hp)
+        _run("record", "he", "help", history_path=hp)
+
+        code, out = _run("history", "he", history_path=hp)
+        assert code == 0
+        assert "hello" in out
+        assert "help" in out
+        # hello selected twice, should appear first
+        assert out.index("hello") < out.index("help")
+
+    def test_history_unknown_prefix_says_so(self, tmp_path: Path) -> None:
+        hp = tmp_path / "h.json"
+        _run("record", "he", "hello", history_path=hp)
+        code, out = _run("history", "xyz", history_path=hp)
+        assert code == 0
+        assert "No history" in out
+
+    def test_history_shows_ago_label(self, tmp_path: Path) -> None:
+        hp = tmp_path / "h.json"
+        _run("record", "he", "hello", history_path=hp)
+        code, out = _run("history", "he", history_path=hp)
+        assert code == 0
+        # should show some time-ago label
+        assert "ago" in out

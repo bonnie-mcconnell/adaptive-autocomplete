@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from aac.cli import debug, explain, record, suggest
+from aac.cli import debug, explain, history, record, suggest
 from aac.cli.app import build_engine
 from aac.presets import PRESETS, available_presets, describe_presets
 from aac.storage.json_store import JsonHistoryStore
@@ -106,6 +106,23 @@ def main() -> None:
         help="Completion the user selected (e.g. 'programming')",
     )
 
+    history_p = subparsers.add_parser(
+        "history",
+        help="Show what the engine has learned (selection counts and recency)",
+    )
+    history_p.add_argument(
+        "prefix",
+        nargs="?",
+        default=None,
+        help="Prefix to inspect (optional). Without it, shows a summary of all prefixes.",
+    )
+    history_p.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_LIMIT,
+        help=f"Maximum number of entries to show (default: {DEFAULT_LIMIT})",
+    )
+
     debug_p = subparsers.add_parser(
         "debug",
         help="Run the debug pipeline (verbose internal output, not for end users)",
@@ -191,6 +208,11 @@ def _run(args: argparse.Namespace) -> None:
             store=store,
             text=args.text,
             value=args.value,
+        ),
+        "history": lambda: history.run(
+            history=persisted_history,
+            prefix=args.prefix,
+            limit=args.limit,
         ),
         "debug": lambda: debug.run(
             engine=engine,
