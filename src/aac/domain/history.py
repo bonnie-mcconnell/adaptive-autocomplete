@@ -271,3 +271,23 @@ class History:
             prefix: dict(values)
             for prefix, values in snapshot.items()
         }
+
+    def copy(self) -> "History":
+        """
+        Return an independent deep copy of this History instance.
+
+        The returned History contains the same entries as the original but
+        shares no mutable state - modifications to either (via ``record()``)
+        do not affect the other.
+
+        Used by ``compare_presets()`` to give each preset engine its own
+        isolated History snapshot so that concurrent or sequential engine
+        operations cannot corrupt each other's state.
+
+        O(n) in the number of history entries.
+        """
+        new_history = History()
+        for entry in self._entries:
+            new_history._entries.append(entry)
+            new_history._by_prefix[entry.prefix].append(entry)
+        return new_history
