@@ -245,3 +245,7 @@ def _run(args: argparse.Namespace) -> None:
     }
 
     dispatch[args.command]()
+
+
+if __name__ == "__main__":
+    main()

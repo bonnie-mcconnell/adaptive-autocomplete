@@ -14,18 +14,19 @@ Run everything including integration tests:
 from __future__ import annotations
 
 import json as _json
+import sys
 import subprocess
 from pathlib import Path
 
 import pytest
 
-_POETRY_RUN = ["poetry", "run", "aac"]
+_AAC_RUN = [sys.executable, "-m", "aac.cli.main"]
 
 
 def _aac(*args: str, history_path: Path) -> subprocess.CompletedProcess[str]:
     """Run `aac` via poetry with a scoped history file."""
     return subprocess.run(
-        [*_POETRY_RUN, "--history-path", str(history_path), *args],
+        [*_AAC_RUN, "--history-path", str(history_path), *args],
         capture_output=True,
         text=True,
         check=True,
@@ -128,7 +129,7 @@ class TestCliRoundTrip:
         """presets subcommand outputs all preset names."""
         from aac.presets import available_presets
         result = subprocess.run(
-            [*_POETRY_RUN, "presets"],
+            [*_AAC_RUN, "presets"],
             capture_output=True, text=True, check=True,
         )
         for name in available_presets():
@@ -138,7 +139,7 @@ class TestCliRoundTrip:
         """presets --json outputs valid JSON with all preset names."""
         from aac.presets import available_presets
         result = subprocess.run(
-            [*_POETRY_RUN, "presets", "--json"],
+            [*_AAC_RUN, "presets", "--json"],
             capture_output=True, text=True, check=True,
         )
         data = _json.loads(result.stdout)

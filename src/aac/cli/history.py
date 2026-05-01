@@ -51,7 +51,7 @@ def _show_summary(entries: list[HistoryEntry], limit: int) -> None:
         prefix_top[pfx] = prefix_value_counts[pfx].most_common(1)[0][0]
 
     print(f"{'Prefix':<20} {'Selections':>10}  {'Top completion'}")
-    print("─" * 55)
+    print("-" * 55)
     for pfx, count in prefix_counts.most_common(limit):
         top = prefix_top[pfx]
         print(f"  {pfx:<18} {count:>10}  {top!r}")
@@ -82,7 +82,7 @@ def _show_prefix(entries: list[HistoryEntry], prefix: str, limit: int) -> None:
 
     print(f"History for prefix {prefix!r}:")
     print(f"  {'Value':<24} {'Count':>6}  {'Last selected'}")
-    print("  " + "─" * 50)
+    print("  " + "-" * 50)
 
     for value, count in sorted(value_counts.items(), key=lambda kv: -kv[1])[:limit]:
         last = value_last_seen.get(value)

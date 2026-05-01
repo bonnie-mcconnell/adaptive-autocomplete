@@ -42,7 +42,9 @@ from collections.abc import Iterable, Mapping
 from aac.domain.types import (
     CompletionContext,
     Predictor,
+    PredictorExplanation,
     ScoredSuggestion,
+    Suggestion,
     ensure_context,
 )
 from aac.predictors.symspell import SymSpellPredictor
@@ -126,7 +128,23 @@ class AdaptiveSymSpellPredictor(Predictor):
         if not prefix:
             return []
 
-        if len(prefix) < self._short_prefix_len:
-            return self._inner_tight.predict(ctx)
+        inner = self._inner_tight if len(prefix) < self._short_prefix_len else self._inner_full
+        results = list(inner.predict(ctx))
 
-        return self._inner_full.predict(ctx)
+        if prefix in inner._delete_map:
+            exact_score = max((s.score for s in results), default=0.0)
+            results.append(
+                ScoredSuggestion(
+                    suggestion=Suggestion(value=prefix),
+                    score=max(1.0, exact_score + 1e-9),
+                    explanation=PredictorExplanation(
+                        value=prefix,
+                        score=max(1.0, exact_score + 1e-9),
+                        source=self.name,
+                        confidence=1.0,
+                    ),
+                )
+            )
+
+        results.sort(key=lambda s: s.score, reverse=True)
+        return results
