@@ -282,10 +282,10 @@ class EngineConfig:
         if self_rankers != other_rankers:
             diffs.append(f"rankers: {self_rankers} → {other_rankers}")
         else:
-            for a, b in zip(self.rankers, other.rankers, strict=False):
-                if a.params != b.params:
+            for a, b in zip(self.rankers, other.rankers, strict=False):  # type: ignore[assignment]
+                if a.params != b.params:  # type: ignore[union-attr]
                     diffs.append(
-                        f"ranker {a.name!r} params: {a.params} → {b.params}"
+                        f"ranker {a.name!r} params: {a.params} → {b.params}"  # type: ignore[union-attr]
                     )
 
         return diffs

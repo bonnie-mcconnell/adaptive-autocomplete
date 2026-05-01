@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
     from aac.engine.engine import AutocompleteEngine
+    from aac.ranking.explanation import RankingExplanation
 
 # ---------------------------------------------------------------------------
 # HTML - embedded so the demo requires zero extra files
@@ -755,7 +756,7 @@ def _make_handler(
 
                 # Run explain() on each cached engine - fast because engines
                 # are already built.
-                explanations_by_preset: dict[str, list[object]] = {
+                explanations_by_preset: dict[str, list[RankingExplanation]] = {
                     name: eng.explain(q)[:limit]
                     for name, eng in self._cmp_engines.items()
                 }
@@ -766,19 +767,19 @@ def _make_handler(
                         seen.setdefault(exp.value, None)
                 all_values = list(seen)
 
-                lookup: dict[str, dict[str, tuple[int, object]]] = {}
+                lookup: dict[str, dict[str, tuple[int, RankingExplanation]]] = {}
                 for name in preset_names:
                     lookup[name] = {
                         exp.value: (i + 1, exp)
                         for i, exp in enumerate(explanations_by_preset[name])
                     }
 
-                rows = []
+                rows: list[dict[str, object]] = []
                 for value in all_values:
-                    ranks: dict[str, object] = {}
-                    bases: dict[str, object] = {}
-                    boosts: dict[str, object] = {}
-                    finals: dict[str, object] = {}
+                    ranks: dict[str, int | None] = {}
+                    bases: dict[str, float | None] = {}
+                    boosts: dict[str, float | None] = {}
+                    finals: dict[str, float | None] = {}
                     for name in preset_names:
                         entry = lookup[name].get(value)
                         if entry is not None:

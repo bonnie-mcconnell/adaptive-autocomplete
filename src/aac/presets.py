@@ -15,6 +15,7 @@ from aac.predictors.history import HistoryPredictor
 from aac.predictors.symspell import SymSpellPredictor
 from aac.predictors.trigram import TrigramPredictor
 from aac.ranking.decay import DecayFunction, DecayRanker
+from aac.ranking.explanation import RankingExplanation
 from aac.ranking.score import ScoreRanker
 
 # ---------------------------------------------------------------------
@@ -674,7 +675,7 @@ def compare_presets(
     }
 
     # Collect explanations per preset.
-    explanations_by_preset: dict[str, list] = {}
+    explanations_by_preset: dict[str, list[RankingExplanation]] = {}
     for name, engine in engines.items():
         explanations_by_preset[name] = engine.explain(text)[:limit]
 
@@ -704,11 +705,11 @@ def compare_presets(
         for name in preset_names:
             entry = lookup[name].get(value)
             if entry is not None:
-                rank, exp = entry
+                rank, exp = entry  # type: ignore[assignment]
                 ranks[name] = rank
-                bases[name] = exp.base_score  # type: ignore[attr-defined]
-                boosts[name] = exp.history_boost  # type: ignore[attr-defined]
-                finals[name] = exp.final_score  # type: ignore[attr-defined]
+                bases[name] = exp.base_score
+                boosts[name] = exp.history_boost
+                finals[name] = exp.final_score
             else:
                 ranks[name] = None
                 bases[name] = None
