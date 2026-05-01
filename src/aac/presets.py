@@ -8,6 +8,7 @@ from aac.data import load_english_frequencies
 from aac.domain.history import History
 from aac.domain.types import WeightedPredictor
 from aac.engine.engine import AutocompleteEngine
+from aac.predictors.adaptive_symspell import AdaptiveSymSpellPredictor
 from aac.predictors.edit_distance import EditDistancePredictor
 from aac.predictors.frequency import FrequencyPredictor
 from aac.predictors.history import HistoryPredictor
@@ -294,21 +295,30 @@ def _production_engine(
     vocabulary: Mapping[str, int] | None = None,
 ) -> AutocompleteEngine:
     """
-    Trigram approximate matching. Full vocabulary scale, ~600µs/call.
+    Hybrid typo recovery: SymSpell for 1-3 char prefixes, trigram for 4+.
 
-    Solves the BK-tree scalability problem: at max_distance=2 over 48k
-    words, the BK-tree's triangle inequality pruning becomes ineffective
-    (search ball covers most of the metric space) and search degrades to
-    O(n) at ~60ms/call.
+    Neither approach alone covers the full input range well:
 
-    TrigramPredictor pre-filters to a shortlist of ~20-100 words using
-    trigram overlap before running exact Levenshtein, giving ~600µs/call
-    at the same vocabulary size - a 100x improvement.
+    - TrigramPredictor: ~600µs/call, excellent discrimination at 4+ chars,
+      but returns nothing for 1-3 char prefixes where trigrams are too sparse.
 
-    Constraint: trigram matching requires prefix length >= 4. For 1-3
-    character prefixes only frequency and history signals apply. Use the
-    'robust' preset with a curated small vocabulary if short-prefix typo
-    recovery is required.
+    - SymSpellPredictor: ~400µs/call, O(1) average query, correct at any
+      prefix length - but at max_distance=2 over 48k words it generates a
+      large candidate shortlist for very short queries, adding noise.
+
+    The hybrid uses each where it performs best: SymSpell fills the 1-3 char
+    gap where trigram is silent, trigram takes over at 4+ chars where it's
+    fast and precise. Both run all the time; at 4+ chars SymSpell contributes
+    an additive signal that rarely conflicts with trigram - it's consistent
+    enough to leave active rather than switching between strategies.
+
+    Weight rationale:
+        FrequencyPredictor(weight=1.0) and HistoryPredictor(weight=1.2) set
+        the base signal. SymSpellPredictor(weight=0.35) and
+        TrigramPredictor(weight=0.4) are intentionally weak - they are typo
+        recovery signals, not primary ranking signals. At short prefixes,
+        SymSpell provides the only typo signal and its 0.35 weight is enough
+        to surface a corrected word above a low-frequency exact match.
     """
     history = history or History()
     frequencies = vocabulary or _get_default_vocabulary()
@@ -323,12 +333,22 @@ def _production_engine(
             weight=1.2,
         ),
         WeightedPredictor(
+            predictor=AdaptiveSymSpellPredictor(
+                vocabulary=frequencies.keys(),
+                max_distance=2,
+                short_prefix_len=4,
+                short_max_distance=1,
+                frequencies=frequencies,
+            ),
+            weight=0.35,
+        ),
+        WeightedPredictor(
             predictor=TrigramPredictor(
                 vocabulary=frequencies.keys(),
                 max_distance=2,
                 frequencies=frequencies,
             ),
-            weight=0.4,  # intentionally weak fallback signal
+            weight=0.4,
         ),
     ]
 
@@ -363,9 +383,9 @@ PRESETS: dict[str, EnginePreset] = {
     ),
     "production": EnginePreset(
         name="production",
-        description="Trigram typo recovery + recency decay. Recommended for full-scale use.",
+        description="Hybrid typo recovery (SymSpell 1-3 chars, trigram 4+) + recency decay. Recommended default.",
         build=_production_engine,
-        predictors=("frequency", "history", "trigram"),
+        predictors=("frequency", "history", "symspell", "trigram"),
         ranking="score + recency decay",
         learning="enabled (time-aware)",
     ),
@@ -410,7 +430,11 @@ PRESETS: dict[str, EnginePreset] = {
 
 
 def available_presets() -> list[str]:
-    return sorted(PRESETS.keys())
+    # bktree is retained in PRESETS for internal benchmarking but excluded
+    # from the public listing.  It degrades to O(n) at 48k+ words and is
+    # not suitable for production use.  Users who need it can call
+    # create_engine("bktree") directly.
+    return sorted(name for name in PRESETS if name != "bktree")
 
 
 def get_preset(name: str) -> EnginePreset:
@@ -477,3 +501,227 @@ def describe_presets() -> str:
         lines.append("")
 
     return "\n".join(lines).rstrip()
+
+
+class PresetComparison:
+    """
+    Side-by-side explanation comparison across multiple presets for a query.
+
+    This is the API that makes the ``explain()`` feature actionable beyond
+    a single engine instance.  If you are running ``production`` and want to
+    know whether switching to ``robust`` would change your top-5 for a given
+    prefix, call ``compare_presets()`` and inspect the component scores
+    side-by-side.  No manual engine construction or result zipping required.
+
+    Attributes:
+        text:     The query prefix that was compared.
+        presets:  The preset names that were compared, in the order given.
+        rows:     One row per unique suggestion, in order of first appearance
+                  across all preset results.  Each row is a dict:
+
+                    {
+                      "value":        str,          # the suggestion
+                      "ranks":        {preset: int | None},
+                      "base_scores":  {preset: float | None},
+                      "boosts":       {preset: float | None},
+                      "finals":       {preset: float | None},
+                    }
+
+                  A value of ``None`` means the suggestion was not returned
+                  by that preset for this query.
+
+    Use ``to_table()`` for a plain-text summary, or access ``rows`` directly
+    for structured output (CLI flags, JSON APIs, Jupyter notebooks).
+    """
+
+    def __init__(
+        self,
+        text: str,
+        presets: list[str],
+        rows: list[dict[str, object]],
+    ) -> None:
+        self.text = text
+        self.presets = presets
+        self.rows = rows
+
+    def to_table(self, *, limit: int | None = None) -> str:
+        """
+        Return a plain-text comparison table.
+
+        Each row is one suggestion; columns show rank, base score, boost,
+        and final score for each preset side-by-side.
+
+        Parameters:
+            limit: Maximum rows to include.  Defaults to all rows.
+        """
+        rows = self.rows[:limit] if limit is not None else self.rows
+        if not rows:
+            return f"No suggestions for {self.text!r} in any preset."
+
+        col_w = max(len(p) for p in self.presets) + 2
+        val_w = max(len(str(r["value"])) for r in rows) + 2
+
+        header_parts = [f"{'suggestion':<{val_w}}"]
+        for p in self.presets:
+            header_parts.append(f"{p:^{col_w * 4}}")
+        header = "  ".join(header_parts)
+
+        sub_header_parts = [" " * val_w]
+        for _ in self.presets:
+            sub_header_parts.append(
+                f"{'rank':>{col_w}}{'base':>{col_w}}{'boost':>{col_w}}{'final':>{col_w}}"
+            )
+        sub_header = "  ".join(sub_header_parts)
+
+        separator = "-" * len(sub_header)
+
+        lines = [header, sub_header, separator]
+        for row in rows:
+            parts = [f"{row['value']:<{val_w}}"]
+            ranks: dict[str, int | None] = row["ranks"]  # type: ignore[assignment]
+            bases: dict[str, float | None] = row["base_scores"]  # type: ignore[assignment]
+            boosts: dict[str, float | None] = row["boosts"]  # type: ignore[assignment]
+            finals: dict[str, float | None] = row["finals"]  # type: ignore[assignment]
+            for p in self.presets:
+                rank = ranks.get(p)
+                base = bases.get(p)
+                boost = boosts.get(p)
+                final = finals.get(p)
+                rank_s = f"#{rank}" if rank is not None else "-"
+                base_s = f"{base:.3f}" if base is not None else "-"
+                boost_s = f"{boost:+.3f}" if boost is not None else "-"
+                final_s = f"{final:.3f}" if final is not None else "-"
+                parts.append(
+                    f"{rank_s:>{col_w}}{base_s:>{col_w}}{boost_s:>{col_w}}{final_s:>{col_w}}"
+                )
+            lines.append("  ".join(parts))
+
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (
+            f"PresetComparison(text={self.text!r}, "
+            f"presets={self.presets!r}, "
+            f"rows={len(self.rows)})"
+        )
+
+
+def compare_presets(
+    text: str,
+    presets: list[str] | None = None,
+    *,
+    vocabulary: Mapping[str, int] | None = None,
+    history: History | None = None,
+    limit: int = 10,
+) -> PresetComparison:
+    """
+    Compare suggestion rankings and score breakdowns across multiple presets.
+
+    Builds one engine per preset, runs ``explain()`` on each, and returns a
+    ``PresetComparison`` with side-by-side scores for every suggestion that
+    appears in any preset's results.
+
+    This is the primary tool for answering questions like:
+      - "Would switching from ``default`` to ``production`` change my top-5?"
+      - "How much is the DecayRanker boosting 'hello' vs the base frequency score?"
+      - "Which preset surfaces 'receive' for the typo 'recieve'?"
+
+    Parameters:
+        text:       The query prefix to compare.
+        presets:    Preset names to compare.  Defaults to all public presets
+                    (``available_presets()``).
+        vocabulary: Custom vocabulary shared across all preset engines.
+                    If None, the bundled 48k English corpus is used.
+        history:    History shared across all preset engines.  If None, each
+                    engine starts with an empty history - so rankings reflect
+                    only frequency and typo-recovery signals, not learning.
+                    Pass a loaded History to compare presets under real usage.
+        limit:      Maximum suggestions to include per preset.  Default: 10.
+
+    Returns:
+        A ``PresetComparison`` with ``rows`` (structured data) and
+        ``to_table()`` (human-readable summary).
+
+    Example::
+
+        cmp = compare_presets("recieve", ["stateless", "production"])
+        print(cmp.to_table())
+
+        # Check whether 'receive' is recovered by all presets
+        for row in cmp.rows:
+            if row["value"] == "receive":
+                print(row["finals"])  # {preset: score or None}
+
+    Notes:
+        Building engines with full-scale SymSpell or trigram indexes takes
+        ~1–2 seconds per engine.  ``compare_presets()`` is intended for
+        offline analysis, not hot-path request handling.  Cache the results
+        or run comparisons in a background job.
+    """
+    preset_names = presets if presets is not None else available_presets()
+
+    # Build one engine per preset.  All share the same vocabulary but each
+    # gets an independent copy of the History so that engine operations
+    # during comparison cannot corrupt each other's state, and so the
+    # comparison reflects a consistent point-in-time snapshot.
+    engines = {
+        name: create_engine(
+            name,
+            vocabulary=vocabulary,
+            history=history.copy() if history is not None else None,
+        )
+        for name in preset_names
+    }
+
+    # Collect explanations per preset.
+    explanations_by_preset: dict[str, list] = {}
+    for name, engine in engines.items():
+        explanations_by_preset[name] = engine.explain(text)[:limit]
+
+    # Union of all suggestions that appeared in any preset, in order of
+    # first appearance (preserves the ordering of the first preset listed).
+    seen: dict[str, None] = {}
+    for name in preset_names:
+        for exp in explanations_by_preset[name]:
+            seen.setdefault(exp.value, None)
+    all_values = list(seen)
+
+    # Build lookup: preset -> {value: (rank, explanation)}
+    lookup: dict[str, dict[str, tuple[int, object]]] = {}
+    for name in preset_names:
+        lookup[name] = {
+            exp.value: (i + 1, exp)
+            for i, exp in enumerate(explanations_by_preset[name])
+        }
+
+    rows: list[dict[str, object]] = []
+    for value in all_values:
+        ranks: dict[str, int | None] = {}
+        bases: dict[str, float | None] = {}
+        boosts: dict[str, float | None] = {}
+        finals: dict[str, float | None] = {}
+
+        for name in preset_names:
+            entry = lookup[name].get(value)
+            if entry is not None:
+                rank, exp = entry
+                ranks[name] = rank
+                bases[name] = exp.base_score  # type: ignore[union-attr]
+                boosts[name] = exp.history_boost  # type: ignore[union-attr]
+                finals[name] = exp.final_score  # type: ignore[union-attr]
+            else:
+                ranks[name] = None
+                bases[name] = None
+                boosts[name] = None
+                finals[name] = None
+
+        rows.append({
+            "value": value,
+            "ranks": ranks,
+            "base_scores": bases,
+            "boosts": boosts,
+            "finals": finals,
+        })
+
+    return PresetComparison(text=text, presets=preset_names, rows=rows)
+

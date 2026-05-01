@@ -5,12 +5,12 @@ import json
 import sys
 from pathlib import Path
 
-from aac.cli import debug, explain, history, record, suggest
+from aac.cli import debug, demo, explain, history, record, suggest
 from aac.cli.app import build_engine
 from aac.presets import PRESETS, available_presets, describe_presets
 from aac.storage.json_store import JsonHistoryStore
 
-DEFAULT_HISTORY_PATH = Path(".aac_history.json")
+DEFAULT_HISTORY_PATH = Path("~/.aac_history.json").expanduser()
 DEFAULT_LIMIT = 10
 
 
@@ -132,6 +132,23 @@ def main() -> None:
         help="Input prefix to debug",
     )
 
+    demo_p = subparsers.add_parser(
+        "demo",
+        help="Start an interactive browser demo showing suggestions, explanations, and preset comparison",
+    )
+    demo_p.add_argument(
+        "--port",
+        type=int,
+        default=8421,
+        help="Local port for the demo server (default: 8421)",
+    )
+    demo_p.add_argument(
+        "--no-browser",
+        action="store_true",
+        default=False,
+        help="Print the URL but do not open the browser automatically",
+    )
+
     args = parser.parse_args()
 
     try:
@@ -154,7 +171,8 @@ def _run(args: argparse.Namespace) -> None:
                         "ranking": p.ranking,
                         "learning": p.learning,
                     }
-                    for p in PRESETS.values()
+                    for name in available_presets()
+                    for p in [PRESETS[name]]
                 ],
                 indent=2,
             ))
@@ -217,6 +235,12 @@ def _run(args: argparse.Namespace) -> None:
         "debug": lambda: debug.run(
             engine=engine,
             text=args.text,
+        ),
+        "demo": lambda: demo.run(
+            engine=engine,
+            port=args.port,
+            preset=args.preset,
+            no_browser=args.no_browser,
         ),
     }
 

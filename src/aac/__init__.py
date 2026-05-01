@@ -30,6 +30,7 @@ Or compose a custom engine directly:
 """
 from __future__ import annotations
 
+from aac.domain.contextual_history import ContextualHistory
 from aac.domain.history import History
 from aac.domain.thread_safe_history import ThreadSafeHistory
 from aac.domain.types import (
@@ -38,8 +39,10 @@ from aac.domain.types import (
     ScoredSuggestion,
     WeightedPredictor,
 )
+from aac.engine.config import EngineConfig
 from aac.engine.engine import AutocompleteEngine
-from aac.presets import create_engine, get_preset
+from aac.predictors.adaptive_symspell import AdaptiveSymSpellPredictor
+from aac.presets import PresetComparison, compare_presets, create_engine, get_preset
 from aac.ranking.explanation import RankingExplanation
 from aac.storage.json_store import JsonHistoryStore
 from aac.vocabulary import (
@@ -49,15 +52,20 @@ from aac.vocabulary import (
 )
 
 __all__ = [
+    "AdaptiveSymSpellPredictor",
     "AutocompleteEngine",
     "CompletionContext",
+    "ContextualHistory",
+    "EngineConfig",
     "History",
     "JsonHistoryStore",
     "Predictor",
+    "PresetComparison",
     "RankingExplanation",
     "ScoredSuggestion",
     "ThreadSafeHistory",
     "WeightedPredictor",
+    "compare_presets",
     "create_engine",
     "get_preset",
     "vocabulary_from_file",
