@@ -277,8 +277,8 @@ class EngineConfig:
                     f"predictor {name!r} weight: {a.weight} → {b.weight}"
                 )
 
-        self_rankers = [r.name for r in self.rankers]
-        other_rankers = [r.name for r in other.rankers]
+        self_rankers: list[str] = [r.name for r in self.rankers]
+        other_rankers: list[str] = [r.name for r in other.rankers]
         if self_rankers != other_rankers:
             diffs.append(f"rankers: {self_rankers} → {other_rankers}")
         else:

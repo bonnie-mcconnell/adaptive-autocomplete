@@ -706,9 +706,9 @@ def compare_presets(
             if entry is not None:
                 rank, exp = entry
                 ranks[name] = rank
-                bases[name] = exp.base_score  # type: ignore[union-attr]
-                boosts[name] = exp.history_boost  # type: ignore[union-attr]
-                finals[name] = exp.final_score  # type: ignore[union-attr]
+                bases[name] = exp.base_score  # type: ignore[attr-defined]
+                boosts[name] = exp.history_boost  # type: ignore[attr-defined]
+                finals[name] = exp.final_score  # type: ignore[attr-defined]
             else:
                 ranks[name] = None
                 bases[name] = None

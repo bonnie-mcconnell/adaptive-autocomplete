@@ -755,7 +755,7 @@ def _make_handler(
 
                 # Run explain() on each cached engine - fast because engines
                 # are already built.
-                explanations_by_preset: dict[str, list] = {
+                explanations_by_preset: dict[str, list[object]] = {
                     name: eng.explain(q)[:limit]
                     for name, eng in self._cmp_engines.items()
                 }
@@ -766,7 +766,7 @@ def _make_handler(
                         seen.setdefault(exp.value, None)
                 all_values = list(seen)
 
-                lookup: dict[str, dict[str, tuple]] = {}
+                lookup: dict[str, dict[str, tuple[int, object]]] = {}
                 for name in preset_names:
                     lookup[name] = {
                         exp.value: (i + 1, exp)
@@ -834,7 +834,7 @@ def _find_free_port(preferred: int) -> int:
             return preferred
         except OSError:
             s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
+            return int(s.getsockname()[1])
 
 
 # ---------------------------------------------------------------------------
