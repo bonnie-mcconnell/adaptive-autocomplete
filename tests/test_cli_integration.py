@@ -14,8 +14,8 @@ Run everything including integration tests:
 from __future__ import annotations
 
 import json as _json
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
