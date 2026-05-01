@@ -28,9 +28,17 @@ class RankingExplanation:
     # Primary source (e.g. top-level ranker)
     source: str
 
-    # Optional detailed breakdowns
+    # Detailed breakdowns - always populated with all configured
+    # predictors/rankers; 0.0 means "ran but didn't contribute".
     base_components: Mapping[str, float] = field(default_factory=dict)
     history_components: Mapping[str, float] = field(default_factory=dict)
+
+    # Relative contribution of each source as a fraction of final_score.
+    # {source: fraction} where fractions may not sum to exactly 1.0 due to
+    # rounding.  Sources with zero contribution are omitted.
+    # Useful for weight-tuning: "history is contributing 75% of the final
+    # score - consider reducing its weight."
+    contribution_pct: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         expected = self.base_score + self.history_boost

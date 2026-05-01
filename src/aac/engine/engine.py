@@ -13,7 +13,7 @@ from aac.domain.types import (
     WeightedPredictor,
 )
 from aac.ranking.base import Ranker
-from aac.ranking.contracts import LearnsFromHistory
+from aac.ranking.contracts import LearnsFromHistory, PredictorLearnsFromHistory
 from aac.ranking.explanation import RankingExplanation
 from aac.ranking.score import ScoreRanker
 
@@ -284,68 +284,118 @@ class AutocompleteEngine:
         Architecture:
             Explanations are built from two sources of ground truth:
 
-            1. **Base score** - the aggregated predictor score from ``_score()``,
-               before any ranker touches it. This is always the correct base regardless
-               of which rankers are present or how many.
+            1. **Base score** - the aggregated predictor score from
+               ``_score_with_breakdown()``, before any ranker touches it.
+               This is always the correct base regardless of which rankers
+               are present or how many.
 
-            2. **Ranker deltas** - for each ranker, the score delta it applied:
-               ``post_rank_score - pre_rank_score``. Each ranker's explain() method
-               provides the *identity* of its boost (which source, under which key)
-               even when the delta is zero.
+            2. **Ranker deltas** - captured in a single forward pass through
+               the ranker chain.  For each ranker, the score delta it applied
+               is ``post_score - pre_score`` per suggestion.  This is computed
+               once, not by re-running the pipeline a second time.
 
-            This approach is immune to the ranker-composition problem that plagues
-            explanation-by-accumulation: there is no way for one ranker's explanation
-            to accidentally double-count or overwrite another's base score.
+            This approach is immune to the double-pipeline problem: explain()
+            costs the same as suggest(), not 2×.  It is also immune to the
+            double-counting problem that plagues explanation-by-accumulation:
+            there is no way for one ranker's explanation to overwrite or add
+            to another's base score.
 
         Returns explanations ordered by final ranked position.
         """
         ctx = CompletionContext(text)
 
-        # Ground truth 1: pre-ranking predictor scores, with per-predictor breakdown.
+        # Ground truth 1: pre-ranking predictor scores with per-predictor breakdown.
         pre_ranking, predictor_breakdown = self._score_with_breakdown(ctx)
-        pre_by_value = {s.suggestion.value: s for s in pre_ranking}
 
-        # Ground truth 2: post-ranking scores (after all rankers applied).
-        ranked = self._apply_ranking(ctx, pre_ranking)
-        post_by_value = {s.suggestion.value: s for s in ranked}
+        # Single forward pass through the ranker chain.
+        # After each ranker we record the score delta it applied, then pass
+        # the re-scored list into the next ranker.  This gives us both the
+        # final ranked order AND each ranker's individual contribution in
+        # exactly one pipeline run.
+        ranker_deltas: list[tuple[str, dict[str, float]]] = []
+        running = pre_ranking
 
-        # For each ranker, capture its score delta per suggestion.
-        ranker_boost_labels: list[tuple[str, dict[str, float]]] = []
-
-        running = list(pre_ranking)
         for ranker in self._rankers:
             pre_scores = {s.suggestion.value: s.score for s in running}
-            after = ranker.rank(ctx.text, running)
-            post_scores = {s.suggestion.value: s.score for s in after}
 
+            # Enforce the ranker invariant here too, identical to _apply_ranking.
+            original_values = {s.suggestion.value for s in running}
+            after = ranker.rank(ctx.text, running)
+            after_values = {s.suggestion.value for s in after}
+            if after_values != original_values:
+                added = after_values - original_values
+                removed = original_values - after_values
+                raise RuntimeError(
+                    f"Ranker {ranker.__class__.__name__} modified the suggestion set. "
+                    f"Added: {added or 'none'}. Removed: {removed or 'none'}."
+                )
+
+            post_scores = {s.suggestion.value: s.score for s in after}
             source_name = ranker.__class__.__name__.replace("Ranker", "").lower()
+
             deltas: dict[str, float] = {
                 v: post_scores[v] - pre_scores[v]
                 for v in pre_scores
                 if abs(post_scores[v] - pre_scores[v]) > 1e-12
             }
             if deltas:
-                ranker_boost_labels.append((source_name, deltas))
+                ranker_deltas.append((source_name, deltas))
 
             running = after
 
-        # Build final explanations: base from _score_with_breakdown (structured,
-        # no string parsing), boost from ranker deltas.
+        # `running` is now in final ranked order.
+        # Build explanations using pre-ranking breakdown (base) and
+        # accumulated ranker deltas (boost).
+        pre_by_value = {s.suggestion.value: s for s in pre_ranking}
+        post_by_value = {s.suggestion.value: s.score for s in running}
+
         explanations: list[RankingExplanation] = []
-        for s in ranked:
+        # All predictor names configured in this engine - used to populate
+        # base_components with 0.0 for predictors that didn't fire for this
+        # word.  Without this, a word that ranks beyond FrequencyPredictor's
+        # max_results cutoff would show no "frequency" key in base_components,
+        # which is indistinguishable from "no FrequencyPredictor configured".
+        all_predictor_names = [wp.predictor.name for wp in self._predictors]
+        all_ranker_names = [
+            r.__class__.__name__.replace("Ranker", "").lower()
+            for r in self._rankers
+        ]
+
+        for s in running:
             value = s.suggestion.value
             pre = pre_by_value[value]
             base_score = pre.score
             predictor_source = pre.explanation.source if pre.explanation else "unknown"
 
-            # Per-predictor weighted contributions - exact, not parsed from trace strings.
-            base_components = dict(predictor_breakdown.get(value, {predictor_source: base_score}))
+            # Start with zeros for every configured predictor, then overwrite
+            # with actual contributions.  This makes the breakdown complete:
+            # a 0.0 means "predictor ran, word was below its threshold",
+            # not "predictor not configured".
+            base_components: dict[str, float] = {
+                name: 0.0 for name in all_predictor_names
+            }
+            base_components.update(predictor_breakdown.get(value, {}))
 
-            total_boost = post_by_value[value].score - base_score
-            history_components: dict[str, float] = {}
-            for ranker_name, deltas in ranker_boost_labels:
+            total_boost = post_by_value[value] - base_score
+            history_components: dict[str, float] = {
+                name: 0.0 for name in all_ranker_names
+                if name not in ("score",)  # ScoreRanker applies no boost
+            }
+            for ranker_name, deltas in ranker_deltas:
                 if value in deltas:
                     history_components[ranker_name] = deltas[value]
+
+            # contribution_pct: what fraction of the final score came from
+            # each source.  Useful for weight-tuning decisions.
+            final = base_score + total_boost
+            if abs(final) > 1e-12:
+                contribution_pct: dict[str, float] = {
+                    k: round(v / final, 4)
+                    for k, v in {**base_components, **history_components}.items()
+                    if abs(v) > 1e-12
+                }
+            else:
+                contribution_pct = {}
 
             explanations.append(
                 RankingExplanation(
@@ -356,6 +406,7 @@ class AutocompleteEngine:
                     source=predictor_source,
                     base_components=base_components,
                     history_components=history_components,
+                    contribution_pct=contribution_pct,
                 )
             )
 
@@ -374,13 +425,14 @@ class AutocompleteEngine:
         Schema::
 
             {
-                "value": str,
-                "base_score": float,
-                "history_boost": float,
-                "final_score": float,
-                "sources": [str, ...],         # all contributing rankers
-                "base_components": {str: float},
-                "history_components": {str: float},
+                "value":               str,
+                "base_score":          float,
+                "history_boost":       float,
+                "final_score":         float,
+                "sources":             [str, ...],
+                "base_components":     {str: float},
+                "history_components":  {str: float},
+                "contribution_pct":    {str: float},
             }
         """
         results: list[dict[str, object]] = []
@@ -397,6 +449,7 @@ class AutocompleteEngine:
                     "sources": all_sources if len(all_sources) > 1 else [e.source],
                     "base_components": dict(e.base_components),
                     "history_components": dict(e.history_components),
+                    "contribution_pct": dict(e.contribution_pct),
                 }
             )
         return results
@@ -404,6 +457,146 @@ class AutocompleteEngine:
     # ------------------------------------------------------------------
     # Learning
     # ------------------------------------------------------------------
+
+    def suggest_with_history(
+        self,
+        text: str,
+        *,
+        limit: int | None = None,
+    ) -> list[tuple[str, int]]:
+        """
+        Return ranked suggestions paired with their raw selection counts.
+
+        Each suggestion is paired with the number of times the user has
+        selected it for this prefix.  A count of 0 means the suggestion
+        comes from frequency or typo-recovery signals, not from recorded
+        history.
+
+        This is the right API when you want to show a count badge or
+        "recently used" marker next to suggestions in a UI.  Calling
+        ``suggest()`` and ``history.counts_for_prefix()`` separately and
+        zipping the results produces the same data but requires two calls
+        and risks the rankings diverging if history is updated between them.
+
+        Parameters:
+            text:  The input prefix to complete.
+            limit: Maximum number of suggestions to return.
+
+        Returns:
+            List of ``(suggestion, count)`` pairs in ranked order.
+
+        Example::
+
+            for word, count in engine.suggest_with_history("prog", limit=5):
+                badge = f"({count})" if count > 0 else ""
+                print(f"{word} {badge}")
+        """
+        ctx = CompletionContext(text)
+        ranked = self._apply_ranking(ctx, self._score(ctx))
+        if limit is not None:
+            ranked = ranked[:limit]
+
+        prefix = ctx.prefix()
+        counts = self._history.counts_for_prefix(prefix)
+
+        return [
+            (s.suggestion.value, counts.get(s.suggestion.value, 0))
+            for s in ranked
+        ]
+
+    def suggest_with_confidence(
+        self,
+        text: str,
+        *,
+        limit: int | None = None,
+    ) -> list[tuple[str, float]]:
+        """
+        Return ranked suggestions with normalised confidence scores.
+
+        Each suggestion is paired with a confidence value in (0, 1] where
+        1.0 means the top-ranked candidate.  Scores are normalised against
+        the top result, so they represent relative ranking strength rather
+        than raw internal scores (which are not meaningful across queries).
+
+        Use this when you want to style suggestions differently - for
+        example, bolding high-confidence results or drawing a visual
+        separator before the low-confidence tail.
+
+        Parameters:
+            text:  The input prefix to complete.
+            limit: Maximum number of suggestions to return.
+
+        Returns:
+            List of ``(suggestion, confidence)`` pairs in ranked order.
+
+        Example::
+
+            results = engine.suggest_with_confidence("prog", limit=5)
+            for word, conf in results:
+                label = "★ " if conf > 0.8 else "  "
+                print(f"{label}{word}  ({conf:.0%})")
+        """
+        ctx = CompletionContext(text)
+        ranked = self._apply_ranking(ctx, self._score(ctx))
+        if limit is not None:
+            ranked = ranked[:limit]
+
+        if not ranked:
+            return []
+
+        top_score = ranked[0].score
+        # Guard against division by zero or near-zero scores.  The `or 1.0`
+        # pattern only catches exactly-zero values - a top_score of 1e-14
+        # (possible with custom vocabularies where all words have frequency 1
+        # and no history) would divide everything by 1e-14 and push all
+        # confidences near 1.0, making the normalisation meaningless.
+        # Using max(abs(top_score), 1e-9) handles both the zero case and the
+        # near-zero case correctly, and abs() prevents a negative top score
+        # (which cannot happen under normal operation but is defensive) from
+        # inverting the sign of all confidences.
+        normaliser = max(abs(top_score), 1e-9)
+        return [
+            (s.suggestion.value, s.score / normaliser)
+            for s in ranked
+        ]
+
+    def reset_history(self) -> None:
+        """
+        Clear all recorded history from the engine's in-memory state.
+
+        Replaces the internal History object with a fresh empty one and
+        propagates the change to all learning rankers and any predictors
+        that expose a ``history`` attribute (e.g. ``HistoryPredictor``).
+
+        This does not modify any persisted store - if you have a
+        ``JsonHistoryStore``, call ``store.save(engine.history)`` after
+        resetting to write the empty history to disk.  Otherwise the next
+        ``store.load()`` will restore the old history.
+
+        Example - reset and persist the cleared state::
+
+            engine.reset_history()
+            store.save(engine.history)
+
+        Typical use cases: testing, user-initiated "forget everything",
+        or switching to a new domain without restarting the process.
+        """
+        self._history = History()
+
+        # Propagate to learning rankers.
+        for ranker in self._rankers:
+            if isinstance(ranker, LearnsFromHistory):
+                ranker.history = self._history
+
+        # Propagate to predictors that implement PredictorLearnsFromHistory.
+        # Using the typed protocol rather than hasattr() means only predictors
+        # that explicitly opt in (by implementing the property) are updated.
+        # A predictor with an unrelated attribute named 'history' is not
+        # affected - it must satisfy the full protocol (readable + settable
+        # property returning History) to be updated here.
+        for weighted in self._predictors:
+            if isinstance(weighted.predictor, PredictorLearnsFromHistory):
+                weighted.predictor.history = self._history
 
     def record_selection(self, text: str, value: str) -> None:
         """
@@ -515,3 +708,77 @@ class AutocompleteEngine:
     def history(self) -> History:
         """Return the engine's history source of truth."""
         return self._history
+
+    def to_config(
+        self,
+        *,
+        preset: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> "EngineConfig":
+        """
+        Serialise this engine's configuration to an ``EngineConfig``.
+
+        The config captures predictor names, weights, and ranker parameters
+        in a JSON-serialisable form.  Use it to:
+
+        - Deploy the same engine to multiple servers without repeating
+          Python constructor calls.
+        - Audit and diff two engine configurations (``config_a.diff(config_b)``).
+        - Store the engine config alongside vocabulary and history for
+          full operational reproducibility.
+
+        Parameters:
+            preset:   If this engine was built via ``create_engine()``,
+                      pass the preset name here so ``config.build()`` can
+                      use the fast path.  If None, ``config.build()`` will
+                      raise ``NotImplementedError`` for custom engines.
+            metadata: Arbitrary caller-supplied key-value pairs stored
+                      alongside the config (e.g. vocabulary path, deploy
+                      timestamp, git SHA).
+
+        Returns:
+            An ``EngineConfig`` that can be serialised via ``to_json()``
+            and reconstructed via ``EngineConfig.from_json(...).build()``.
+
+        Example::
+
+            config = engine.to_config(
+                preset="production",
+                metadata={"vocabulary": "~/.aac_vocab.json"},
+            )
+            with open("engine_config.json", "w") as f:
+                f.write(config.to_json())
+
+            # On another server:
+            with open("engine_config.json") as f:
+                engine2 = EngineConfig.from_json(f.read()).build()
+        """
+        from aac.engine.config import EngineConfig, PredictorConfig, RankerConfig
+        from aac.ranking.decay import DecayRanker
+
+        predictors = [
+            PredictorConfig(name=wp.predictor.name, weight=wp.weight)
+            for wp in self._predictors
+        ]
+
+        rankers: list[RankerConfig] = []
+        for r in self._rankers:
+            if isinstance(r, DecayRanker):
+                rankers.append(RankerConfig(
+                    name="decay",
+                    params={
+                        "half_life_seconds": r._decay.half_life_seconds,
+                        "weight": r._weight,
+                    },
+                ))
+            else:
+                rankers.append(RankerConfig(
+                    name=r.__class__.__name__.replace("Ranker", "").lower(),
+                ))
+
+        return EngineConfig(
+            preset=preset,
+            predictors=predictors,
+            rankers=rankers,
+            metadata=metadata or {},
+        )
