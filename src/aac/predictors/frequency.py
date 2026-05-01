@@ -13,7 +13,7 @@ from aac.domain.types import (
     ensure_context,
 )
 
-_DEFAULT_MAX_RESULTS = 20
+_DEFAULT_MAX_RESULTS = 100
 
 
 class FrequencyPredictor(Predictor):
@@ -31,7 +31,7 @@ class FrequencyPredictor(Predictor):
     keeps predict() fast regardless of vocabulary size.
 
     Score model:
-        Scores are log-normalised to the range (0, 1]:
+        Scores are log-normalised to the range (0, 1]::
 
             score = log(1 + freq) / log(1 + max_freq)
 
@@ -47,21 +47,36 @@ class FrequencyPredictor(Predictor):
 
     Args:
         frequencies: Mapping of word -> frequency count.
-        max_results: Maximum number of candidates to return per query.
-                     Limits the pre-sorted slice, not the index itself.
-                     Default: 20.
+        max_results: Maximum candidates to return per prefix query.
+
+                     Words ranked below this threshold in frequency for their
+                     prefix bucket are silently excluded from this predictor's
+                     output - but may still appear in the engine's final
+                     suggestions if another predictor (HistoryPredictor,
+                     SymSpell) surfaces them independently.
+
+                     Implication for explain(): if a word ranks beyond
+                     max_results in frequency for its prefix, explain() will
+                     show ``frequency: 0.0`` in base_components (not a missing
+                     key), meaning the predictor ran but this word was below
+                     the cutoff.
+
+                     Default: 100. The old default of 20 silently truncated
+                     results: words ranked 21+ in frequency could appear via
+                     HistoryPredictor but showed no frequency component in
+                     explain(), making the breakdown look incomplete. 100
+                     eliminates truncation for all practical vocabulary sizes
+                     at the default suggest() limit of 10.
 
     Design notes:
-        - Exact matches (prefix == word) are excluded. If the user has
-          already typed the complete word, completing it to itself is
-          noise, not signal. This matches the behaviour of TriePrefixPredictor.
+        - Exact matches (prefix == word) are excluded - completing a word
+          to itself is noise, not signal.
         - Input is case-sensitive. The bundled vocabulary is lowercase;
-          callers are responsible for normalising case before prediction
-          if case-insensitive matching is required.
-        - Memory: O(sum of word lengths × avg words per prefix). For a
-          48k-word vocabulary with avg length 7, this is approximately
-          ~344k string references - around 2.8MB in CPython. Acceptable
-          for a server process; for embedded use, limit vocabulary size.
+          normalise case before prediction if needed.
+        - Memory: O(sum of word lengths × avg words per prefix). For the
+          48k-word vocabulary, approximately 2.8MB in CPython. For embedded
+          use with memory constraints, limit vocabulary size or lower
+          max_results.
     """
 
     name = "frequency"

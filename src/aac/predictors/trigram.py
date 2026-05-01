@@ -188,18 +188,27 @@ class TrigramPredictor(Predictor):
         self._index = TrigramIndex(vocabulary)
         self._max_distance = max_distance
         self._base_score = base_score
-        # Pre-compute log-scaled frequency bonus for tiebreaking within equal-
-        # distance groups. Capped at 10% of the minimum distance score so a
-        # common word at distance 2 never outranks a rare word at distance 1.
+        # Pre-compute log-normalised frequency scores for ranking within
+        # equal-distance groups.
+        #
+        # Scoring formula: score = base_score / (1 + distance) * (1 + FREQ_WEIGHT * freq_score)
+        #
+        # The old additive formula capped frequency at 10% of the minimum
+        # distance score, making frequency nearly invisible in practice.
+        # The multiplicative formula gives frequency real power within each
+        # distance bucket while keeping distance strictly dominant across
+        # buckets (see SymSpellPredictor for full derivation).
+        _FREQ_WEIGHT = 0.5
+
         if frequencies:
             max_freq = max(frequencies.values()) or 1
-            cap = (base_score / (1 + max_distance)) * 0.1
-            self._freq_bonus: dict[str, float] = {
-                w: cap * (math.log1p(f) / math.log1p(max_freq))
+            self._freq_score: dict[str, float] = {
+                w: math.log1p(f) / math.log1p(max_freq)
                 for w, f in frequencies.items()
             }
         else:
-            self._freq_bonus = {}
+            self._freq_score = {}
+        self._freq_weight = _FREQ_WEIGHT
 
     def predict(self, ctx: CompletionContext | str) -> list[ScoredSuggestion]:
         ctx = ensure_context(ctx)
@@ -213,9 +222,14 @@ class TrigramPredictor(Predictor):
         for word, distance in self._index.candidates(
             prefix, max_distance=self._max_distance
         ):
+            # Exact matches (word == prefix) are excluded - completing a word
+            # to itself is noise.  Mirrors FrequencyPredictor and SymSpellPredictor.
+            if word == prefix:
+                continue
+
+            freq_score = self._freq_score.get(word, 0.0)
             distance_score = self._base_score / (1 + distance)
-            freq_bonus = self._freq_bonus.get(word, 0.0)
-            score = distance_score + freq_bonus
+            score = distance_score * (1.0 + self._freq_weight * freq_score)
             confidence = max(0.0, 1.0 - (distance / (self._max_distance + 1)))
 
             results.append(

@@ -148,16 +148,49 @@ class SymSpellPredictor(Predictor):
             k: frozenset(v) for k, v in delete_map.items()
         }
 
-        # Frequency bonus for tiebreaking - same approach as TrigramPredictor
+        # Pre-compute log-normalised frequency scores for ranking within
+        # equal-distance groups.
+        #
+        # The old formula was:
+        #   score = base_score / (1 + distance) + freq_bonus
+        # where freq_bonus was capped at 10% of the minimum distance score.
+        # This made frequency nearly invisible: "the" (freq 537k) scored lower
+        # than "tea" (freq 537) for the query "teh" because both are at
+        # distance 2, and the 10% cap on the bonus was smaller than the noise
+        # in the distance scoring.
+        #
+        # The correct model: distance determines the order of buckets;
+        # frequency determines the order within each bucket.
+        #
+        #   score = base_score / (1 + distance) * (1 + FREQ_WEIGHT * freq_score)
+        #
+        # where freq_score = log(1+f) / log(1+max_f) ∈ (0, 1].
+        # FREQ_WEIGHT = 0.5 means a maximally frequent word scores 1.5×
+        # the base for its distance bucket, while a rare word scores 1.0×.
+        # This keeps distance strictly dominant across buckets (a distance-1
+        # word with freq=1 scores 0.5 * 1.0 = 0.5; a distance-2 word with
+        # freq=max scores 0.333 * 1.5 = 0.5 - exactly tied, which is the
+        # crossover point intentionally) while giving frequency real power
+        # within each bucket.
+        #
+        # FREQ_WEIGHT = 0.5 was chosen so that:
+        # - At the same distance, the highest-frequency word scores 1.5× the
+        #   lowest-frequency word (meaningful separation).
+        # - A maximally frequent distance-2 word never beats a distance-1 word
+        #   of zero frequency (0.333 * 1.5 = 0.5 == 0.5 * 1.0 = 0.5 - tied
+        #   at the extreme; in practice distance-1 words will have non-zero
+        #   frequency and will always lead).
+        _FREQ_WEIGHT = 0.5
+
         if frequencies:
             max_freq = max(frequencies.values()) or 1
-            cap = (base_score / (1 + max_distance)) * 0.1
-            self._freq_bonus: dict[str, float] = {
-                w: cap * (math.log1p(f) / math.log1p(max_freq))
+            self._freq_score: dict[str, float] = {
+                w: math.log1p(f) / math.log1p(max_freq)
                 for w, f in frequencies.items()
             }
         else:
-            self._freq_bonus = {}
+            self._freq_score = {}
+        self._freq_weight = _FREQ_WEIGHT
 
     def predict(self, ctx: CompletionContext | str) -> list[ScoredSuggestion]:
         ctx = ensure_context(ctx)
@@ -190,9 +223,19 @@ class SymSpellPredictor(Predictor):
 
         results: list[ScoredSuggestion] = []
         for word, distance in candidates.items():
+            # Exact matches (word == prefix) are excluded - completing a word
+            # to itself is noise, not a suggestion.  This mirrors the behaviour
+            # of FrequencyPredictor, which excludes exact matches at index
+            # construction time.  Without this exclusion, a low-frequency exact
+            # match (e.g. "prog" freq=14) would outscore all prefix completions
+            # ("program" freq=1860, "programming" freq=234) because distance=0
+            # gives it the maximum score regardless of frequency.
+            if word == prefix:
+                continue
+
+            freq_score = self._freq_score.get(word, 0.0)
             distance_score = self._base_score / (1 + distance)
-            freq_bonus = self._freq_bonus.get(word, 0.0)
-            score = distance_score + freq_bonus
+            score = distance_score * (1.0 + self._freq_weight * freq_score)
             confidence = max(0.0, 1.0 - (distance / (self._max_distance + 1)))
 
             results.append(

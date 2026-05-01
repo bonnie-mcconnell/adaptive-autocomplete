@@ -38,6 +38,14 @@ class HistoryPredictor(Predictor):
     def __init__(self, history: History) -> None:
         self._history = history
 
+    @property
+    def history(self) -> History:
+        return self._history
+
+    @history.setter
+    def history(self, value: History) -> None:
+        self._history = value
+
     def predict(self, ctx: CompletionContext | str) -> list[ScoredSuggestion]:
         ctx = ensure_context(ctx)
         prefix = ctx.prefix()
