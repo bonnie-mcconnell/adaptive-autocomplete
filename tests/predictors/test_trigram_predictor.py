@@ -86,12 +86,21 @@ def test_no_results_below_min_prefix_length() -> None:
     assert pred.predict("hel") == []
 
 
-def test_exact_match_returns_distance_zero() -> None:
+def test_exact_match_excluded() -> None:
+    """Trigram must NOT return a word that exactly equals the query.
+
+    Completing a word to itself is noise.  FrequencyPredictor excludes exact
+    matches at index build time; TrigramPredictor and SymSpellPredictor
+    exclude them at query time.  Without this exclusion, a low-frequency
+    exact match (e.g. "prog" freq=14) outscores all prefix completions.
+    """
     pred = TrigramPredictor(_VOCAB, max_distance=2)
     results = {s.suggestion.value: s for s in pred.predict("hello")}
-    assert "hello" in results
-    # Distance-0 match gets full base_score
-    assert results["hello"].score == pytest.approx(1.0)
+    assert "hello" not in results, (
+        "Exact match 'hello' must be excluded from results for query 'hello'"
+    )
+    # Near neighbours must still be present
+    assert "hell" in results, "Distance-1 neighbour 'hell' must still appear"
 
 
 # ------------------------------------------------------------------

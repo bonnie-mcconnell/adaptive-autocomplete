@@ -154,3 +154,27 @@ class TestCliRoundTrip:
         assert "programming" in result.stdout, (
             f"Expected 'programming' in typo-recovery output:\n{result.stdout}"
         )
+
+    def test_history_subcommand_shows_learned_selections(self, tmp_path: Path) -> None:
+        """
+        'aac history <prefix>' shows what the engine has learned across processes.
+
+        Records are written by one invocation of 'aac record' and read by a
+        separate invocation of 'aac history', simulating realistic cross-process usage.
+        """
+        history_path = tmp_path / "history.json"
+
+        # Record some selections in one process
+        for _ in range(3):
+            _aac("record", "ze", "zealous", history_path=history_path)
+        _aac("record", "ze", "zed", history_path=history_path)
+
+        # Read back in a separate process
+        result = _aac("history", "ze", history_path=history_path)
+        assert result.returncode == 0, f"aac history failed: {result.stderr}"
+        assert "zealous" in result.stdout
+        assert "zed" in result.stdout
+        # zealous (3 selections) must appear before zed (1 selection)
+        assert result.stdout.index("zealous") < result.stdout.index("zed"), (
+            f"Expected 'zealous' before 'zed' in history output:\n{result.stdout}"
+        )

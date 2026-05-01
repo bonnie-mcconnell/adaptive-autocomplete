@@ -222,13 +222,22 @@ def test_symspell_works_on_short_prefix() -> None:
     assert "he" in results
 
 
-def test_symspell_exact_match_distance_zero() -> None:
-    """Exact match must have the highest score (distance=0)."""
+def test_symspell_exact_match_excluded() -> None:
+    """Exact match (word == query) must be excluded from SymSpell results.
+
+    Completing a word to itself is not useful.  The predictor should only
+    return words that are different from the typed prefix - potential
+    corrections or completions, not the input itself.
+    """
     predictor = SymSpellPredictor(["hello", "help", "hero"], max_distance=2)
     from aac.domain.types import CompletionContext
     results = predictor.predict(CompletionContext("hello"))
     by_value = {s.suggestion.value: s.score for s in results}
-    assert by_value["hello"] > by_value.get("help", 0)
+    assert "hello" not in by_value, (
+        "Exact match 'hello' must be excluded from results for query 'hello'. "
+        f"Got: {list(by_value.keys())}"
+    )
+    assert "help" in by_value, "Distance-1 neighbour 'help' must still appear"
 
 
 def test_symspell_no_results_beyond_max_distance() -> None:
@@ -514,10 +523,22 @@ def test_explain_as_dicts_includes_sources_and_components() -> None:
     assert help_d["history_boost"] > 0
     assert "learning" in help_d["history_components"]
 
-    # "hello" has no history - only frequency in base_components
+    # "hello" has no history - history base_component is 0.0, not absent.
+    # All configured predictor names appear in base_components; 0.0 means
+    # "predictor ran but this word was not in its output" (not "not configured").
     hello_d = by_value["hello"]
-    assert list(hello_d["base_components"].keys()) == ["frequency"]
-    assert hello_d["history_components"] == {}
+    assert "frequency" in hello_d["base_components"], (
+        "frequency must be present in base_components for all suggestions"
+    )
+    assert hello_d["base_components"].get("history", None) == pytest.approx(0.0), (
+        "history should be 0.0 for 'hello' since no history was recorded for it"
+    )
+    # history_components now always includes all non-score ranker names.
+    # For a word with no history, the decay value is 0.0 (not absent).
+    learning_boost = hello_d["history_components"].get("learning", 0.0)
+    assert learning_boost == pytest.approx(0.0), (
+        f"'hello' with no history should have zero learning boost, got {learning_boost}"
+    )
 
     # All dicts have the required schema keys
     for d in dicts:

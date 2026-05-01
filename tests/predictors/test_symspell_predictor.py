@@ -41,9 +41,14 @@ def _linear_search(
     Brute-force O(n) correctness reference.
 
     Returns every word in ``words`` within ``max_distance`` Levenshtein
-    edits of ``query``. Used to verify SymSpell matches without gaps.
+    edits of ``query``, excluding exact matches (word == query).
+
+    The exact-match exclusion mirrors the behaviour of SymSpellPredictor
+    and TrigramPredictor: completing a word to itself is noise, not a
+    suggestion.  FrequencyPredictor excludes exact matches at index
+    construction time; the typo predictors exclude them at query time.
     """
-    return {w for w in words if levenshtein(query, w) <= max_distance}
+    return {w for w in words if levenshtein(query, w) <= max_distance and w != query}
 
 
 def _symspell_words(
@@ -355,14 +360,27 @@ class TestEdgeCasesForDeleteNeighbourhood:
         # levenshtein("ab", "bc") = 2 → must be included
         assert "bc" in results
 
-    def test_exact_match_included_at_distance_zero(self) -> None:
+    def test_exact_match_excluded_at_distance_zero(self) -> None:
         """
-        SymSpell adds word→word in the delete map. A query that exactly
-        matches a vocabulary word must appear in results at distance 0.
+        SymSpell must NOT return a word that exactly matches the query.
+
+        Completing a word to itself is noise - the user has already typed the
+        complete word and does not need to see it completed to itself.
+        FrequencyPredictor excludes exact matches at index construction time;
+        SymSpell excludes them at query time.
+
+        This also prevents a low-frequency exact match from outranking all
+        prefix completions: "prog" (freq=14) at distance=0 would otherwise
+        score ~1.10, burying "program" (freq=1860) at score ~0.57.
         """
         p = SymSpellPredictor(["hello", "help", "hero"], max_distance=2)
         results = _symspell_words(p, "hello")
-        assert "hello" in results, "Exact match must be included in results"
+        assert "hello" not in results, (
+            "Exact match must be excluded from results - completing a word "
+            "to itself is noise, not a suggestion"
+        )
+        # Near-neighbours must still be found
+        assert "help" in results, "Distance-1 neighbour 'help' must still be returned"
 
     def test_short_prefix_length_1(self) -> None:
         """
@@ -429,29 +447,42 @@ class TestEdgeCasesForDeleteNeighbourhood:
 
 class TestScoring:
     """
-    Scoring contract: closer matches score higher; exact matches score highest.
+    Scoring contract: distance-1 beats distance-2; exact matches excluded.
     These parallel TrigramPredictor's scoring tests for interchangeability.
     """
 
     def test_closer_match_scores_higher(self) -> None:
         """Distance-1 match must score above distance-2 match."""
-        p = SymSpellPredictor(["hello", "hxllo"], max_distance=2)
+        # "hxllo" is distance 1 from "hello"; "hxxllo" is distance 2
+        p = SymSpellPredictor(["hxllo", "hxxllo"], max_distance=2)
         results = {s.suggestion.value: s.score for s in p.predict("hello")}
-        # "hello" is distance 0; "hxllo" is distance 1
-        assert results["hello"] > results["hxllo"], (
-            f"Exact match should outscore distance-1: {results}"
+        assert "hxllo" in results and "hxxllo" in results, (
+            f"Both distance-1 and distance-2 neighbours should appear: {results}"
+        )
+        assert results["hxllo"] > results["hxxllo"], (
+            f"Distance-1 should outscore distance-2: {results}"
         )
 
-    def test_exact_match_scores_base_score(self) -> None:
-        """Exact match (distance 0) must score at base_score (1.0 / (1+0) = 1.0)."""
-        p = SymSpellPredictor(["hello"], max_distance=2, base_score=1.0)
+    def test_exact_match_excluded(self) -> None:
+        """Exact match (word == query) must not appear in results.
+
+        Completing a word to itself is noise - the user typed the complete
+        word and should see completions, not the word itself repeated.
+        FrequencyPredictor excludes exact matches at index construction time;
+        SymSpell excludes them at query time for the same reason.
+        """
+        p = SymSpellPredictor(["hello", "help"], max_distance=2, base_score=1.0)
         results = {s.suggestion.value: s.score for s in p.predict("hello")}
-        assert "hello" in results
-        assert abs(results["hello"] - 1.0) < 1e-9
+        assert "hello" not in results, (
+            "Exact match must be excluded - 'hello' should not complete to 'hello'"
+        )
+        assert "help" in results, "Distance-1 neighbour must still be returned"
 
     def test_results_sorted_descending_by_score(self) -> None:
+        # Use vocab words that are NOT equal to the query so exact-match
+        # exclusion doesn't interfere with the sorting verification.
         p = SymSpellPredictor(
-            ["hello", "hxllo", "hxxllo"], max_distance=2
+            ["hxllo", "hxxllo", "world"], max_distance=2
         )
         scores = [s.score for s in p.predict("hello")]
         assert scores == sorted(scores, reverse=True), (

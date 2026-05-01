@@ -364,3 +364,142 @@ class TestHistorySubcommand:
         assert code == 0
         # should show some time-ago label
         assert "ago" in out
+
+
+
+# ------------------------------------------------------------------
+# demo subcommand
+# ------------------------------------------------------------------
+
+import pytest
+
+
+class TestDemoSubcommand:
+    """Smoke tests for `aac demo` - verifies the server starts and serves.
+
+    All tests use skip_comparison_engines=True to avoid the ~15s startup
+    cost of building all preset engines.  The comparison endpoint itself
+    is covered by the integration test suite where startup cost is acceptable.
+    """
+
+    def _make_server(self, vocab: dict, preset: str = "stateless", port_base: int = 18500):
+        """Build a test server with skip_comparison_engines=True."""
+        import threading, time
+        from http.server import HTTPServer
+        from aac.cli.demo import _find_free_port, _make_handler
+        from aac.presets import create_engine
+
+        engine = create_engine(preset, vocabulary=vocab)
+        port = _find_free_port(port_base)
+        handler = _make_handler(engine, preset, skip_comparison_engines=True)
+        server = HTTPServer(("127.0.0.1", port), handler)
+        return engine, server, port
+
+    def _one_request(self, server, path: str):
+        """Serve exactly one request and return (status, body_bytes)."""
+        import http.client, threading, time
+
+        port = server.server_address[1]
+        thread = threading.Thread(target=lambda: server.handle_request())
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.05)
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request("GET", path)
+            resp = conn.getresponse()
+            body = resp.read()
+            return resp.status, body
+        finally:
+            conn.close()
+            thread.join(timeout=2)
+
+    def test_demo_serves_index_page(self) -> None:
+        """Server must respond to GET / with valid HTML."""
+        _, server, _ = self._make_server({"hello": 100, "help": 80})
+        status, body = self._one_request(server, "/")
+        html = body.decode("utf-8")
+
+        assert status == 200, f"Expected 200, got {status}"
+        assert "adaptive-autocomplete" in html, "Page must contain project name"
+        assert "<html" in html.lower(), "Response must be valid HTML"
+
+    def test_demo_suggest_returns_json_array(self) -> None:
+        """GET /suggest?q=he returns a JSON array with the correct schema."""
+        import json as _json
+
+        _, server, _ = self._make_server({"hello": 100, "help": 80, "hero": 60})
+        status, body = self._one_request(server, "/suggest?q=he&limit=3")
+        data = _json.loads(body)
+
+        assert status == 200
+        assert isinstance(data, list), f"Expected list, got {type(data)}"
+        assert len(data) > 0, "Must return at least one suggestion for 'he'"
+        first = data[0]
+        assert "word" in first, f"Missing 'word' key: {first}"
+        assert "count" in first, f"Missing 'count' key: {first}"
+        assert "confidence" in first, f"Missing 'confidence' key: {first}"
+        assert abs(first["confidence"] - 1.0) < 1e-6, (
+            f"Top suggestion confidence must be 1.0, got {first['confidence']}"
+        )
+
+    def test_demo_suggest_empty_query_returns_empty(self) -> None:
+        """GET /suggest?q= returns an empty JSON array."""
+        import json as _json
+
+        _, server, _ = self._make_server({"hello": 100})
+        status, body = self._one_request(server, "/suggest?q=&limit=5")
+        data = _json.loads(body)
+        assert status == 200
+        assert data == []
+
+    def test_demo_explain_returns_json_with_schema(self) -> None:
+        """GET /explain?q=he returns a JSON array with score fields."""
+        import json as _json
+
+        _, server, _ = self._make_server({"hello": 100, "help": 80})
+        status, body = self._one_request(server, "/explain?q=he&limit=3")
+        data = _json.loads(body)
+
+        assert status == 200
+        assert isinstance(data, list)
+        assert len(data) > 0
+        first = data[0]
+        for key in ("value", "base", "boost", "final", "base_components"):
+            assert key in first, f"Missing key {key!r} in explain response: {first}"
+
+    def test_demo_record_persists_selection(self) -> None:
+        """GET /record?q=he&value=hello records the selection and returns {recorded: true}."""
+        import json as _json
+
+        engine, server, _ = self._make_server({"hello": 100, "help": 80}, preset="default")
+        status, body = self._one_request(server, "/record?q=he&value=hello")
+        data = _json.loads(body)
+
+        assert status == 200
+        assert data.get("recorded") is True
+        assert engine.history.counts_for_prefix("he").get("hello") == 1
+
+    def test_demo_record_empty_query_still_responds(self) -> None:
+        """GET /record with empty q returns {recorded: false} without crashing."""
+        import json as _json
+
+        _, server, _ = self._make_server({"hello": 100}, preset="default")
+        status, body = self._one_request(server, "/record?q=&value=hello")
+        data = _json.loads(body)
+        assert status == 200
+        assert data.get("recorded") is False
+
+    def test_demo_unknown_path_returns_404(self) -> None:
+        """Unknown paths must return 404, not crash."""
+        _, server, _ = self._make_server({"hello": 100})
+        status, _ = self._one_request(server, "/nonexistent_path")
+        assert status == 404
+
+    def test_demo_find_free_port_returns_valid_port(self) -> None:
+        """_find_free_port() returns an integer in the valid port range."""
+        from aac.cli.demo import _find_free_port
+        port = _find_free_port(8421)
+        assert isinstance(port, int)
+        assert 1 <= port <= 65535
