@@ -4,6 +4,341 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-01
+
+### Fixed
+
+- **SymSpell and Trigram returned exact matches - the last major correctness bug.**
+
+  Both `SymSpellPredictor` and `TrigramPredictor` were returning candidates
+  where `word == prefix` (the typed input itself). `FrequencyPredictor` has
+  always excluded exact matches: its prefix index is built with
+  `range(1, len(word))` so the word never appears in its own prefix bucket.
+  The typo predictors had no equivalent exclusion.
+
+  Consequence: for query `"prog"`, `"prog"` itself (freq=14) was returned
+  by SymSpell at distance=0 with score ≈ 1.10 - burying `"program"`
+  (freq=1,860) at score ≈ 0.57 and `"programming"` (freq=234) below that.
+  The top suggestion was the input itself, not a completion.
+
+  The fix: both predictors now skip any candidate where `word == prefix`
+  during the scoring loop. The brute-force equivalence tests were updated to
+  exclude exact matches from the reference set, maintaining the guarantee
+  that SymSpell output equals brute-force for all non-exact candidates.
+
+  After fix, `e.suggest("prog")` correctly leads with `["program", "programs",
+  "progress", ...]`. The typed input never appears as its own suggestion.
+
+### Changed
+
+- **`_linear_search` brute-force reference in `test_symspell_predictor.py`
+  now excludes exact matches** (`w != query`). This is the correct contract:
+  the test verifies that SymSpell finds every word within distance that is
+  *not* the input itself. Tests that verified exact-match *inclusion* have
+  been replaced with tests verifying exact-match *exclusion*.
+
+- **`test_symspell_exact_match_distance_zero` renamed to
+  `test_symspell_exact_match_excluded`** with inverted assertion.
+
+- **`test_exact_match_returns_distance_zero` in `test_trigram_predictor.py`
+  renamed to `test_exact_match_excluded`** with inverted assertion.
+
+
+
+### Fixed
+
+- **SymSpell and Trigram frequency scoring was effectively broken.**
+
+  Both predictors used an additive formula:
+  ```
+  score = base_score / (1 + distance) + freq_bonus
+  ```
+  where `freq_bonus` was capped at 10% of the minimum distance score.
+  This cap was too small - for query "helo", words "help" (freq 5,620)
+  and "hello" (freq 525) at the same edit distance scored nearly identically
+  because the frequency difference contributed less than 3% to the final
+  score.  More severely, "teh" → "the" (edit distance 2, freq 537k) scored
+  lower than "teh" → "ten" (edit distance 1, freq 1,120) not because of
+  distance but because the cap suppressed the frequency advantage.
+
+  The fix is a multiplicative formula:
+  ```
+  score = base_score / (1 + distance) * (1 + FREQ_WEIGHT * freq_score)
+  ```
+  where `freq_score = log(1+f) / log(1+max_f) ∈ (0, 1]` and
+  `FREQ_WEIGHT = 0.5`.  This means within any distance bucket, the most
+  frequent word scores 1.5× the least frequent word - a meaningful
+  separation.  Across distance buckets, distance still dominates:
+  a distance-2 word can never beat a distance-1 word unless the distance-2
+  word has maximum frequency and the distance-1 word has zero frequency
+  (the exact crossover point by design).
+
+  Verified: for query "helo" at edit distance 1, the new ranking is
+  help (5,620) > held (1,740) > hell (1,260) > hello (525) - correctly
+  ordered by corpus frequency.
+
+  This change applies to both `SymSpellPredictor` and `TrigramPredictor`
+  since they shared the same broken formula.  The brute-force equivalence
+  tests still pass because they verify the *set* of returned candidates,
+  not the score values.
+
+- **`explain_as_dicts()` was missing `contribution_pct`.**
+  The `RankingExplanation` dataclass gained `contribution_pct` in v0.6.0.
+  `explain_as_dicts()` was not updated to include it.  The README showed
+  `contribution_pct` in the `explain_as_dicts()` schema but it was absent
+  from the actual output - a documentation-code mismatch that undermined
+  trust in the docs.  Now included in every `explain_as_dicts()` result.
+
+- **Demo `/explain` endpoint was missing `contribution_pct`.**
+  The demo server's `/explain` response was built from `RankingExplanation`
+  fields directly without including `contribution_pct`.  Now included so
+  the demo UI can display per-source contribution percentages.
+
+- **`EngineConfig.build()` was silently using the wrong vocabulary.**
+  If an engine was built with a custom vocabulary, serialised via
+  `to_config()` with `metadata={"vocabulary_path": "/path/to/vocab.json"}`,
+  and then reconstructed via `build()` without passing `vocabulary=`, the
+  engine would silently use the bundled 48k English corpus instead of the
+  original vocabulary.  `build()` now emits a `UserWarning` when
+  `metadata` contains `"vocabulary_path"` but `vocabulary=` was not passed,
+  directing the caller to load and pass their vocabulary explicitly.
+
+### Added
+
+- **`aac demo` subcommand has 8 tests** covering the index page, `/suggest`,
+  `/explain` (including `contribution_pct`), `/record`, empty-query handling,
+  404 for unknown paths, and `_find_free_port()`.  Tests use
+  `skip_comparison_engines=True` and complete in ~1s rather than ~90s.
+
+- **Demo startup shows per-engine build times.**
+  Instead of dots, each engine's build time is shown on its own line:
+  ```
+    building comparison engines (first run takes ~15s)...
+      default       0.8s
+      production    9.4s
+      recency       0.2s
+      robust        6.1s
+      stateless     1.1s
+    ready in 17.6s
+  ```
+
+### Changed
+
+- **`SymSpellPredictor` internal attributes renamed.**
+  `_freq_bonus` replaced by `_freq_score` (normalised log-freq values)
+  and `_freq_weight` (the multiplier constant, currently 0.5).
+  Code that accessed `_freq_bonus` directly will break - this was an
+  internal implementation detail not part of the public API.
+
+- **`TrigramPredictor` internal attributes renamed.**
+  Same change as SymSpellPredictor.
+
+
+
+### Fixed
+
+- **`FrequencyPredictor` default `max_results` raised from 20 to 100.**
+  With `max_results=20`, words ranked 21+ in frequency for their prefix
+  bucket were silently excluded from the predictor's output. They could
+  still appear in `suggest()` via `HistoryPredictor` or SymSpell, but
+  `explain()` would show no `frequency` component - indistinguishable from
+  "FrequencyPredictor not configured". At the bundled 48k vocabulary, "hello"
+  ranks 22nd among "he" words and was always missing from the frequency
+  breakdown. The new default of 100 eliminates silent truncation for all
+  practical vocabulary sizes at the default `suggest()` limit of 10.
+
+- **`explain()` `base_components` is now always complete.** All configured
+  predictor names appear in every suggestion's `base_components`, with `0.0`
+  for predictors that did not contribute to that suggestion. Previously,
+  absent keys were indistinguishable from "predictor not configured". Now
+  `0.0` means "predictor ran, word was below its threshold" and a missing
+  key cannot occur.
+
+- **`compare_presets()` now passes an independent `History` copy to each
+  engine.** Previously all preset engines shared the same live `History`
+  instance. If any engine called `reset_history()` or `record_selection()`
+  during comparison, it would silently corrupt the other engines' state.
+  Each engine now receives `history.copy()` - an independent snapshot with
+  no shared mutable state.
+
+- **Demo `/compare` endpoint no longer blocks the server.** Previously,
+  `compare_presets()` was called on every `/compare` request, rebuilding
+  all preset engines (including two SymSpell indexes + one trigram index
+  per engine) each time - measured at ~14 seconds per call on the
+  single-threaded demo server. All comparison engines are now built once at
+  server startup and reused across requests. First `/compare` response is
+  immediate after startup completes.
+
+### Added
+
+- **`explain()` `contribution_pct` field.** Every `RankingExplanation` now
+  includes a `contribution_pct: dict[str, float]` mapping each contributing
+  source to its fraction of the final score. Sources with zero contribution
+  are omitted. The field is computed as `component_score / final_score` for
+  each non-zero component. Use it for weight-tuning decisions: "history is
+  contributing 75% of the final score for 'hello' - the history weight may
+  be too high."
+
+- **`History.copy()` - independent deep copy.** Returns a new `History`
+  pre-populated with all entries from the original, sharing no mutable state.
+  Used internally by `compare_presets()`. Also useful for testing (take a
+  snapshot before a destructive operation) and for multi-engine setups where
+  each engine must start from the same history state.
+
+- **`ContextualHistory` - domain-partitioned learning.** Wraps one `History`
+  per domain key (e.g. `"shell"`, `"python"`, `"search"`). Domains are
+  created lazily. Use `ctx.for_domain(name)` to get a domain's `History`
+  and pass it to `create_engine()`. Cross-domain contamination is impossible:
+  selections in `"shell"` cannot influence rankings in `"search"`. Supports
+  per-domain persistence via `JsonHistoryStore` and bulk iteration via
+  `ctx.domains()`. Exported from `aac.domain.contextual_history` and the
+  top-level `aac` package.
+
+- **`EngineConfig` - serialisable engine configuration.** `engine.to_config()`
+  captures predictor names, weights, and ranker parameters in a
+  JSON-serialisable dataclass. `EngineConfig.from_json(text).build()` fully
+  reconstructs the engine. Supports:
+    - `to_json()` / `from_json()` / `from_dict()` for persistence
+    - `build(vocabulary, history)` to reconstruct from config
+    - `diff(other)` to audit differences between two configs
+    - `metadata` dict for operational annotations (vocabulary path, deploy
+      timestamp, git SHA)
+  Exported from `aac.engine.config` and the top-level `aac` package.
+
+### Changed
+
+- **`RankingExplanation` gains `contribution_pct` field** (dataclass field
+  with default `field(default_factory=dict)`). Existing code constructing
+  `RankingExplanation` directly is unaffected - the field is keyword-only
+  and has a default. Code that uses `asdict(explanation)` or `to_dict()`
+  will now see the additional key.
+
+- **`explain()` `history_components` now always includes all non-score ranker
+  names** with `0.0` for rankers that applied no boost. `ScoreRanker` is
+  intentionally excluded (it applies no additive boost). This makes the
+  breakdown symmetric with `base_components`.
+
+
+
+### Added
+
+- **`engine.suggest_with_history(text, *, limit=None)`** - ranked suggestions
+  paired with raw selection counts for the current prefix. A count of 0 means
+  the suggestion comes from frequency or typo-recovery signals, not from
+  recorded history. Useful for count badges or "recently used" markers in a UI.
+  Previously, getting this data required two separate calls (`suggest()` then
+  `history.counts_for_prefix()`) with no guarantee the rankings would be
+  consistent between them.
+
+- **`compare_presets(text, presets, *, vocabulary, history, limit)`** - builds
+  one engine per preset and returns a `PresetComparison` with side-by-side
+  rank, base score, history boost, and final score for every suggestion that
+  appears in any preset's results. `PresetComparison.to_table()` renders a
+  plain-text summary; `.rows` is a list of dicts for structured output.
+
+  This is the primary tool for answering: "would switching preset change my
+  top-5?", "what does the decay ranker contribute vs the frequency predictor?",
+  and "which preset recovers this typo?"
+
+- **`aac demo [--port N] [--no-browser]`** - starts a minimal stdlib HTTP server
+  and opens an interactive browser UI. Shows live suggestions with confidence
+  bars, score breakdowns from `explain()`, selection recording (with immediate
+  visible ranking shift), and a preset comparison table driven by
+  `compare_presets()`. No FastAPI, no external dependencies, no internet
+  required. The entire UI is ~400 lines of vanilla HTML/CSS/JS embedded in
+  the Python source.
+
+- **`PredictorLearnsFromHistory` protocol** in `aac.ranking.contracts` - typed
+  contract for predictors that hold a `History` reference. `HistoryPredictor`
+  implements it. `reset_history()` now uses `isinstance(p, PredictorLearnsFromHistory)`
+  rather than `hasattr(p, "history")`, preventing false positives from
+  predictors that have an unrelated attribute named `history`.
+
+### Fixed
+
+- **`explain()` double-pipeline.** The old implementation called `_apply_ranking()`
+  to get ranked order, then ran all rankers a second time in a loop to capture
+  deltas. This made `explain()` cost 2× `suggest()`. The new implementation
+  does a single forward pass through the ranker chain: after each ranker, the
+  score delta per suggestion is captured, then the re-scored list is passed into
+  the next ranker. `explain()` now costs the same as `suggest()`.
+
+- **`suggest_with_confidence()` division guard.** The guard was `or 1.0`, which
+  is falsy-based and only catches an exactly-zero top score. With custom
+  vocabularies where all words have frequency 1 and no history, `top_score`
+  can be a valid but very small positive number (e.g. `1e-12`). Dividing by
+  `1e-12` pushes all confidences toward infinity, making the normalisation
+  meaningless. The guard is now `max(abs(top_score), 1e-9)`, which handles
+  exactly-zero, near-zero, and (defensively) negative top scores correctly.
+
+### Changed
+
+- **`available_presets()` no longer includes `"bktree"`.** The preset is
+  retained in `PRESETS` for benchmarking and remains accessible via
+  `create_engine("bktree")` and `get_preset("bktree")`, but is excluded from
+  the public listing. Reason: it degrades to O(n) at `max_distance=2` over
+  48k+ words (~60ms/call vs ~600µs for `production`) and has no production use
+  case at this vocabulary scale. Leaving it in `available_presets()` made it
+  possible to accidentally `--preset bktree` on the CLI.
+
+- **`compare_presets`, `PresetComparison` exported from top-level `aac` package.**
+
+
+
+### Added
+
+- **`engine.suggest_with_confidence(text, *, limit=None)`** - ranked suggestions
+  paired with normalised confidence scores in (0, 1] where 1.0 is the top
+  candidate. Scores are normalised against the top result, so they represent
+  relative ranking strength rather than raw internal scores. Use this to style
+  suggestions differently (e.g. bold high-confidence results, draw a visual
+  separator before the low-confidence tail).
+
+- **`engine.reset_history()`** - clears all in-memory history and propagates the
+  new empty `History` instance to all learning rankers and any predictor that
+  exposes a `.history` attribute (including `HistoryPredictor`). Does not
+  modify any persisted store - call `store.save(engine.history)` afterward to
+  persist the cleared state to disk. Typical use cases: testing, user-initiated
+  "forget everything", switching to a new domain without restarting.
+
+- **`AdaptiveSymSpellPredictor`** - composable wrapper around `SymSpellPredictor`
+  that applies a conservative `max_distance` (default: 1) for short prefixes and
+  the full `max_distance` (default: 2) for longer ones. Solves the noise problem
+  that raw `SymSpellPredictor` at `max_distance=2` produces on 1–3 char inputs
+  (almost every 2–4 char word is within distance 2 of a 2-char query). Exported
+  from `aac.predictors` and the top-level `aac` package.
+
+- **`HistoryPredictor.history` read/write property** - used internally by
+  `reset_history()` to propagate the new empty `History` to the predictor.
+
+### Fixed
+
+- **`production` preset had no typo recovery for 1–3 character prefixes.**
+  `TrigramPredictor` requires prefix length ≥ 4 to generate useful trigrams -
+  below that, the shortlist degenerates toward the full vocabulary and the
+  predictor returns nothing. The `production` preset now includes
+  `AdaptiveSymSpellPredictor` alongside `TrigramPredictor`. SymSpell handles 1–3
+  char prefixes at `max_distance=1` (conservative, avoids flooding the candidate
+  set); trigram handles 4+ char prefixes at `max_distance=2` (full recovery).
+  Both run at all prefix lengths - their scores combine additively. This was
+  noted as a known limitation in 0.3.0 and is now closed.
+
+- **CLI default history path was `.aac_history.json` in the current working
+  directory.** Users who ran `aac record he hello` expected the selection to
+  persist across sessions and directories. It did not - the file was relative to
+  wherever `aac` was invoked. Default is now `~/.aac_history.json` (user home
+  directory). Pass `--history-path .aac_history.json` to restore the old
+  behaviour. This was the biggest friction point for first-time users.
+
+### Changed
+
+- **`production` preset `predictors` tuple** now includes `"symspell"` and
+  `"trigram"` (previously `"trigram"` only). Code that inspects
+  `get_preset("production").predictors` will see four entries instead of three.
+
+- **`production` preset description** updated to reflect the hybrid strategy.
+
+
 ## [0.3.0] - 2026-04-28
 
 ### Fixed (correctness)
