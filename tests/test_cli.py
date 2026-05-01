@@ -371,7 +371,6 @@ class TestHistorySubcommand:
 # demo subcommand
 # ------------------------------------------------------------------
 
-import pytest
 
 
 class TestDemoSubcommand:
@@ -384,8 +383,8 @@ class TestDemoSubcommand:
 
     def _make_server(self, vocab: dict, preset: str = "stateless", port_base: int = 18500):
         """Build a test server with skip_comparison_engines=True."""
-        import threading, time
         from http.server import HTTPServer
+
         from aac.cli.demo import _find_free_port, _make_handler
         from aac.presets import create_engine
 
@@ -397,7 +396,9 @@ class TestDemoSubcommand:
 
     def _one_request(self, server, path: str):
         """Serve exactly one request and return (status, body_bytes)."""
-        import http.client, threading, time
+        import http.client
+        import threading
+        import time
 
         port = server.server_address[1]
         thread = threading.Thread(target=lambda: server.handle_request())

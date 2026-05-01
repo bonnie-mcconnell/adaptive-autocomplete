@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections.abc import Sequence
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from aac.domain.history import History
 from aac.domain.types import (
@@ -16,6 +16,9 @@ from aac.ranking.base import Ranker
 from aac.ranking.contracts import LearnsFromHistory, PredictorLearnsFromHistory
 from aac.ranking.explanation import RankingExplanation
 from aac.ranking.score import ScoreRanker
+
+if TYPE_CHECKING:
+    from aac.engine.config import EngineConfig
 
 
 class DebugState(TypedDict):
@@ -714,7 +717,7 @@ class AutocompleteEngine:
         *,
         preset: str | None = None,
         metadata: dict[str, object] | None = None,
-    ) -> "EngineConfig":
+    ) -> EngineConfig:
         """
         Serialise this engine's configuration to an ``EngineConfig``.
 

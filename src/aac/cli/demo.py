@@ -20,13 +20,11 @@ import socket
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
     from aac.engine.engine import AutocompleteEngine
-    from aac.presets import PresetComparison
 
 # ---------------------------------------------------------------------------
 # HTML - embedded so the demo requires zero extra files
@@ -666,12 +664,12 @@ document.getElementById("preset-badge").textContent = window._PRESET || "product
 # ---------------------------------------------------------------------------
 
 def _make_handler(
-    engine: "AutocompleteEngine",
+    engine: AutocompleteEngine,
     preset: str,
     *,
     skip_comparison_engines: bool = False,
 ) -> type:
-    from aac.presets import available_presets, compare_presets, create_engine
+    from aac.presets import available_presets, create_engine
 
     # Build comparison engines once at startup.  Each preset engine takes
     # 1-2s to construct (SymSpell + trigram indexes).  Building them per
@@ -680,7 +678,7 @@ def _make_handler(
     #
     # skip_comparison_engines=True skips this build - used in tests to avoid
     # the 15s startup cost when testing other endpoints.
-    _comparison_engines: dict[str, "AutocompleteEngine"] = {}
+    _comparison_engines: dict[str, AutocompleteEngine] = {}
     if not skip_comparison_engines:
         import time as _time
         print("  building comparison engines (first run takes ~15s)...", flush=True)
@@ -757,7 +755,6 @@ def _make_handler(
 
                 # Run explain() on each cached engine - fast because engines
                 # are already built.
-                from aac.presets import PresetComparison
                 explanations_by_preset: dict[str, list] = {
                     name: eng.explain(q)[:limit]
                     for name, eng in self._cmp_engines.items()
@@ -846,7 +843,7 @@ def _find_free_port(preferred: int) -> int:
 
 def run(
     *,
-    engine: "AutocompleteEngine",
+    engine: AutocompleteEngine,
     port: int = 8421,
     preset: str = "production",
     no_browser: bool = False,
@@ -866,10 +863,10 @@ def run(
     handler_class = _make_handler(engine, preset)
     server = HTTPServer(("127.0.0.1", port), handler_class)
 
-    print(f"\nadaptive-autocomplete demo")
+    print("\nadaptive-autocomplete demo")
     print(f"  preset:  {preset}")
     print(f"  url:     {url}")
-    print(f"\npress Ctrl+C to stop\n")
+    print("\npress Ctrl+C to stop\n")
 
     if not no_browser:
         # Open after a short delay so the server is listening first.

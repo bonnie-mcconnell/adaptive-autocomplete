@@ -51,6 +51,8 @@ from aac.storage.json_store import JsonHistoryStore
 HISTORY_PATH = Path(os.environ.get("AAC_HISTORY_PATH", "~/.aac_history.json")).expanduser()
 PRESET = os.environ.get("AAC_PRESET", "production")
 DEFAULT_LIMIT = int(os.environ.get("AAC_DEFAULT_LIMIT", "10"))
+VOCAB_PATH = os.environ.get("AAC_VOCAB_PATH")          # None → bundled 48k English vocab
+VOCAB_FORMAT = os.environ.get("AAC_VOCAB_FORMAT", "wordlist")  # "wordlist" or "text"
 
 # ---------------------------------------------------------------------------
 # Application state - initialised in lifespan
@@ -83,9 +85,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     _store = JsonHistoryStore(HISTORY_PATH)
 
+    # Load custom vocabulary if AAC_VOCAB_PATH is set, otherwise use bundled English vocab
+    vocabulary = None
+    if VOCAB_PATH:
+        from aac.vocabulary import vocabulary_from_file
+        vocabulary = vocabulary_from_file(VOCAB_PATH, format=VOCAB_FORMAT)  # type: ignore[arg-type]
+        print(f"adaptive-autocomplete: loaded {len(vocabulary)} words from {VOCAB_PATH}")
+
     # ThreadSafeHistory wraps a loaded History for concurrent record() calls
     ts_history = ThreadSafeHistory(_store.load())
-    _engine_instance = create_engine(PRESET, history=ts_history)
+    _engine_instance = create_engine(PRESET, history=ts_history, vocabulary=vocabulary)
 
     print(
         f"adaptive-autocomplete: {PRESET} preset loaded, "

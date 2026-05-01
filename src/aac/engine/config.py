@@ -134,7 +134,7 @@ class EngineConfig:
         return json.dumps(self.to_dict(), indent=indent)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EngineConfig":
+    def from_dict(cls, data: dict[str, Any]) -> EngineConfig:
         """Deserialise from a dict (e.g. from ``json.loads()``)."""
         version = data.get("version", 1)
         if version != _SCHEMA_VERSION:
@@ -165,7 +165,7 @@ class EngineConfig:
         )
 
     @classmethod
-    def from_json(cls, text: str) -> "EngineConfig":
+    def from_json(cls, text: str) -> EngineConfig:
         """Deserialise from a JSON string."""
         return cls.from_dict(json.loads(text))
 
@@ -218,6 +218,7 @@ class EngineConfig:
             A fully initialised ``AutocompleteEngine``.
         """
         import warnings
+
         from aac.presets import create_engine
 
         if self.preset is not None:
@@ -241,7 +242,7 @@ class EngineConfig:
             "preset so that build() can delegate to create_engine()."
         )
 
-    def diff(self, other: "EngineConfig") -> list[str]:
+    def diff(self, other: EngineConfig) -> list[str]:
         """
         Return a list of human-readable differences between two configs.
 
@@ -281,7 +282,7 @@ class EngineConfig:
         if self_rankers != other_rankers:
             diffs.append(f"rankers: {self_rankers} → {other_rankers}")
         else:
-            for a, b in zip(self.rankers, other.rankers):
+            for a, b in zip(self.rankers, other.rankers, strict=False):
                 if a.params != b.params:
                     diffs.append(
                         f"ranker {a.name!r} params: {a.params} → {b.params}"

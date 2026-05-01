@@ -74,7 +74,6 @@ from collections.abc import Iterator
 
 from aac.domain.history import History
 
-
 _DEFAULT_DOMAIN = "__default__"
 
 

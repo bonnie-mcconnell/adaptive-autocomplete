@@ -10,14 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from aac.domain.history import History
-from aac.domain.types import CompletionContext, WeightedPredictor
+from aac.domain.types import CompletionContext
 from aac.engine.engine import AutocompleteEngine
 from aac.predictors.adaptive_symspell import AdaptiveSymSpellPredictor
-from aac.predictors.frequency import FrequencyPredictor
-from aac.predictors.history import HistoryPredictor
 from aac.presets import create_engine, get_preset
-from aac.ranking.score import ScoreRanker
 
 _VOCAB = {
     "hello": 100, "help": 80, "hero": 50, "her": 200,

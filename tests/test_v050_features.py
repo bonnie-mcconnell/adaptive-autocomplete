@@ -16,12 +16,11 @@ immediately actionable without reading the source.
 from __future__ import annotations
 
 import math
-from unittest.mock import patch
 
 import pytest
 
 from aac.domain.history import History
-from aac.domain.types import CompletionContext, WeightedPredictor
+from aac.domain.types import WeightedPredictor
 from aac.engine.engine import AutocompleteEngine
 from aac.predictors.frequency import FrequencyPredictor
 from aac.predictors.history import HistoryPredictor
@@ -32,7 +31,7 @@ from aac.presets import (
     create_engine,
     get_preset,
 )
-from aac.ranking.contracts import LearnsFromHistory, PredictorLearnsFromHistory
+from aac.ranking.contracts import PredictorLearnsFromHistory
 from aac.ranking.decay import DecayFunction, DecayRanker
 from aac.ranking.score import ScoreRanker
 
@@ -389,7 +388,6 @@ class TestComparePresets:
         # stateless has no typo recovery; production does.
         # "recieve" (typo) should appear in production but not stateless.
         cmp = compare_presets("recieve", ["stateless", "production"])
-        values = {row["value"] for row in cmp.rows}
         # Find a word that production returns but stateless doesn't.
         for row in cmp.rows:
             if row["ranks"]["production"] is not None and row["ranks"]["stateless"] is None:  # type: ignore[index]

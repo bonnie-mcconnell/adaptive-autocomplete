@@ -272,7 +272,7 @@ class History:
             for prefix, values in snapshot.items()
         }
 
-    def copy(self) -> "History":
+    def copy(self) -> History:
         """
         Return an independent deep copy of this History instance.
 

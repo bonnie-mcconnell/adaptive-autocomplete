@@ -20,9 +20,9 @@ from aac.domain.history import History
 from aac.domain.types import CompletionContext, WeightedPredictor
 from aac.engine.config import EngineConfig, PredictorConfig, RankerConfig
 from aac.engine.engine import AutocompleteEngine
-from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
+from aac.predictors.frequency import _DEFAULT_MAX_RESULTS, FrequencyPredictor
 from aac.predictors.history import HistoryPredictor
-from aac.presets import available_presets, compare_presets, create_engine
+from aac.presets import compare_presets, create_engine
 from aac.ranking.score import ScoreRanker
 
 _VOCAB = {
@@ -281,7 +281,7 @@ class TestComparePresentHistoryIsolation:
         h = History()
         h.record("he", "hello")
 
-        cmp = compare_presets("he", ["default", "recency"], history=h, limit=5)
+        compare_presets("he", ["default", "recency"], history=h, limit=5)
 
         # The comparison should have completed without cross-contamination.
         # We verify by checking that original history is still intact.
