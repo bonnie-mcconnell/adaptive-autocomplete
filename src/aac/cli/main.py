@@ -409,7 +409,7 @@ def _load_vocabulary(args: argparse.Namespace) -> dict[str, int] | None:
         return None
     from aac.vocabulary import vocabulary_from_file
     try:
-        vocab = vocabulary_from_file(vocab_path, format=getattr(args, "vocab_format", "wordlist"))
+        vocab = vocabulary_from_file(vocab_path, fmt=getattr(args, "vocab_format", "wordlist"))
     except FileNotFoundError:
         print(f"aac: error: vocabulary file not found: {vocab_path}", file=sys.stderr)
         sys.exit(1)

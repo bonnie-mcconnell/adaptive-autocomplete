@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 from aac.data import load_english_frequencies
 from aac.domain.history import History
@@ -581,13 +581,12 @@ class PresetComparison:
         lines = [header, sub_header, separator]
         for row in rows:
             parts = [f"{row['value']:<{val_w}}"]
-            # row structure is guaranteed by compare_presets() above:
-            # {"value": str, "ranks": dict, "base_scores": dict, ...}
-            # cast avoids type: ignore while staying explicit about assumptions.
-            ranks = row["ranks"]
-            bases = row["base_scores"]
-            boosts = row["boosts"]
-            finals = row["finals"]
+            # row structure is guaranteed by compare_presets() above.
+            # Narrow the generic object types to concrete dicts for mypy.
+            ranks = cast(dict[str, int | None], row["ranks"])
+            bases = cast(dict[str, float | None], row["base_scores"])
+            boosts = cast(dict[str, float | None], row["boosts"])
+            finals = cast(dict[str, float | None], row["finals"])
             for p in self.presets:
                 rank = ranks.get(p)
                 base = bases.get(p)
@@ -737,7 +736,7 @@ def compare_presets(
     all_values = list(seen)
 
     # Build lookup: preset -> {value: (rank, explanation)}
-    lookup: dict[str, dict[str, tuple[int, object]]] = {}
+    lookup: dict[str, dict[str, tuple[int, RankingExplanation]]] = {}
     for name in preset_names:
         lookup[name] = {
             exp.value: (i + 1, exp)
