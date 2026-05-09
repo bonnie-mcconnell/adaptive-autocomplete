@@ -79,17 +79,14 @@ class AutocompleteEngine:
     """
     Orchestrates prediction, ranking, learning, and explanation.
 
-    This is the public entrypoint for the autocomplete system.
-    Only documented methods are considered stable.
+    Only documented methods are stable API. Internal methods are subject
+    to change without notice.
 
-    Architectural invariants:
-    - Engine owns the CompletionContext lifecycle
-    - Internally everything operates on ScoredSuggestion
-    - Rankers must not add or remove suggestions
-    - Scores must remain finite
-    - Explanation final scores must reconcile with ranking scores
-    - Projection to Suggestion happens only at API boundaries
-    - History has a single source of truth
+    Invariants enforced at runtime:
+    - Rankers may reorder and rescore suggestions, but not add or remove them
+    - All scores are finite
+    - Explanation final_score == base_score + history_boost (enforced in __post_init__)
+    - History is a single shared object across engine and all learning rankers
     """
 
     def __init__(
@@ -328,37 +325,25 @@ class AutocompleteEngine:
         """
         Return per-suggestion ranking explanations in final ranked order.
 
-        Architecture:
-            Explanations are built from two sources of ground truth:
+        Explanations are built in one forward pass through the pipeline:
 
-            1. **Base score** - the aggregated predictor score from
-               ``_score_with_breakdown()``, before any ranker touches it.
-               This is always the correct base regardless of which rankers
-               are present or how many.
+        1. ``_score_with_breakdown()`` captures per-predictor contributions
+           before any ranker runs - the base score.
+        2. For each ranker, the score delta (post - pre) is recorded per
+           suggestion as that ranker's contribution.
 
-            2. **Ranker deltas** - captured in a single forward pass through
-               the ranker chain.  For each ranker, the score delta it applied
-               is ``post_score - pre_score`` per suggestion.  This is computed
-               once, not by re-running the pipeline a second time.
-
-            This approach is immune to the double-pipeline problem: explain()
-            costs the same as suggest(), not 2×.  It is also immune to the
-            double-counting problem that plagues explanation-by-accumulation:
-            there is no way for one ranker's explanation to overwrite or add
-            to another's base score.
-
+        explain() costs the same as suggest() - one pipeline run, not two.
         Returns explanations ordered by final ranked position.
         """
         ctx = CompletionContext(text)
 
-        # Ground truth 1: pre-ranking predictor scores with per-predictor breakdown.
+        # Pre-ranking predictor scores with per-predictor breakdown.
         pre_ranking, predictor_breakdown = self._score_with_breakdown(ctx)
 
-        # Single forward pass through the ranker chain.
-        # After each ranker we record the score delta it applied, then pass
-        # the re-scored list into the next ranker.  This gives us both the
-        # final ranked order AND each ranker's individual contribution in
-        # exactly one pipeline run.
+        # Forward pass through the ranker chain. After each ranker, record
+        # the score delta it applied, then feed the re-scored list into the
+        # next ranker. One pass gives both final ranked order and per-ranker
+        # contribution.
         ranker_deltas: list[tuple[str, dict[str, float]]] = []
         running = pre_ranking
 
@@ -405,9 +390,8 @@ class AutocompleteEngine:
             predictor_source = pre.explanation.source if pre.explanation else "unknown"
 
             # Start with zeros for every configured predictor, then overwrite
-            # with actual contributions.  This makes the breakdown complete:
-            # a 0.0 means "predictor ran, word was below its threshold",
-            # not "predictor not configured".
+            # with actual contributions. A 0.0 means "predictor ran, word
+            # was below its threshold" - not "predictor not configured".
             base_components: dict[str, float] = {
                 name: 0.0 for name in all_predictor_names
             }
@@ -509,11 +493,10 @@ class AutocompleteEngine:
         comes from frequency or typo-recovery signals, not from recorded
         history.
 
-        This is the right API when you want to show a count badge or
-        "recently used" marker next to suggestions in a UI.  Calling
-        ``suggest()`` and ``history.counts_for_prefix()`` separately and
-        zipping the results produces the same data but requires two calls
-        and risks the rankings diverging if history is updated between them.
+        Use when you need to show a count badge or "recently used" marker
+        next to suggestions in a UI. Calling ``suggest()`` and
+        ``history.counts_for_prefix()`` separately requires two calls and
+        risks the rankings diverging if history is updated between them.
 
         Parameters:
             text:  The input prefix to complete.
@@ -630,9 +613,8 @@ class AutocompleteEngine:
           - If the top score dominates by more than ``_DOMINANCE_THRESHOLD`` (4×),
             rank-based weighting is applied: position k gets
             ``1 / (1 + k * _RANK_DECAY_RATE)``, capped at 1.0.
-            This reflects that a heavily-selected word IS the right answer
-            (high confidence) while preserving meaningful separation for
-            the remaining alternatives.
+            A heavily-selected word is the right answer; rank-based weighting
+            preserves meaningful separation for the remaining alternatives.
           - If scores are in a normal range (no strong dominance), raw
             normalised scores are used - they're meaningful and stable.
 
@@ -850,10 +832,10 @@ class AutocompleteEngine:
         Async version of batch_suggest().
 
         Schedules each query on the thread pool executor via suggest_async()
-        and awaits all results with asyncio.gather(). This keeps the event
-        loop unblocked while queries run - the primary use case is async web
-        frameworks (FastAPI, Starlette) where blocking the event loop degrades
-        all concurrent request handlers.
+        and awaits all results with asyncio.gather(), keeping the event
+        loop unblocked while queries run. Primary use case: async web
+        frameworks (FastAPI, Starlette) where blocking the event loop
+        degrades all concurrent request handlers.
 
         **GIL note**: on CPython, pure-Python CPU-bound work does not run in
         true parallel across threads - threads take turns holding the GIL.
@@ -999,10 +981,7 @@ class AutocompleteEngine:
             if isinstance(r, DecayRanker):
                 rankers.append(RankerConfig(
                     name="decay",
-                    params={
-                        "half_life_seconds": r._decay.half_life_seconds,
-                        "weight": r._weight,
-                    },
+                    params=r.ranker_config(),
                 ))
             else:
                 rankers.append(RankerConfig(

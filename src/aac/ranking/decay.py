@@ -120,6 +120,17 @@ class DecayRanker(Ranker, LearnsFromHistory):
         self._cache_valid = True
         return result
 
+    def ranker_config(self) -> dict[str, float]:
+        """Return the parameters needed to reconstruct this ranker.
+
+        Used by WeightOptimiser and engine serialisation to copy ranker
+        configuration without accessing private attributes directly.
+        """
+        return {
+            "half_life_seconds": self._decay.half_life_seconds,
+            "weight": self._weight,
+        }
+
     def rank(
         self,
         prefix: str,

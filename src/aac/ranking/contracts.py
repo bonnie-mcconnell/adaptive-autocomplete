@@ -50,8 +50,8 @@ class PredictorAcceptsRecord(Protocol):
     Contract for predictors that maintain private state beyond the shared History.
 
     The engine calls ``record(ctx, value)`` on every predictor that satisfies
-    this protocol after each user selection.  This hook is intentionally narrow:
-    most predictors are stateless and should NOT implement it.
+    this protocol after each user selection. The hook is narrow by design:
+    most predictors are stateless and should not implement it.
 
     The canonical use case is a predictor that maintains its own frequency table
     or n-gram model that updates in response to selections - state that lives

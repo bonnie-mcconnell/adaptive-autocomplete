@@ -28,35 +28,24 @@ class ThreadSafeHistory(History):
     """
     A History subclass that is safe for concurrent reads and writes.
 
-    Uses a ``threading.RWLock``-style pattern implemented with a
-    ``threading.Lock`` for writes and a reference-counted read-lock using
-    a ``threading.Condition``.  This allows multiple concurrent readers
-    while serialising writers, which is the access pattern of a running
-    autocomplete engine: many predict() calls read history simultaneously,
-    while record_selection() writes occasionally.
+    Uses a ``threading.RWLock``-style pattern: a ``threading.Condition``
+    for write serialisation, reference-counted readers for read concurrency.
+    Multiple readers run simultaneously; writes wait for active readers to
+    finish. Matches the engine's access pattern: many concurrent predict()
+    reads, occasional record_selection() writes.
 
-    Correctness guarantee:
-        - Concurrent calls to ``record()`` from any number of threads will
-          not corrupt internal state.  Each write is fully serialised and
-          waits for all active readers to finish.
-        - All read methods (``entries()``, ``entries_for_prefix()``,
-          ``counts_for_prefix()``, etc.) can execute concurrently with each
-          other and see a consistent, fully-committed view of history.
-        - A write cannot begin until all active reads have completed.
-          A read cannot begin while a write is in progress or waiting.
+    Concurrency guarantees:
+        - Concurrent ``record()`` calls are fully serialised; no corruption.
+        - Read methods run concurrently with each other and see a
+          consistent, fully-committed view.
+        - Writes wait for active reads; reads wait while a write is pending.
 
-    Compatibility:
-        Safe on CPython, PyPy, and free-threaded CPython (PEP 703 / 3.13+).
-        Does not rely on GIL guarantees.  The previous implementation relied
-        on CPython's GIL making list.append() atomic, which is not guaranteed
-        under PyPy or the no-GIL build.
+    Works on CPython, PyPy, and free-threaded CPython (PEP 703 / 3.13+).
+    Does not rely on GIL guarantees.
 
-    Writer starvation:
-        Writers signal a ``Condition`` when they finish, allowing waiting
-        readers to proceed.  Under heavy read load a writer may wait until
-        a quiet moment.  In practice, autocomplete read traffic is bursty
-        and writes are rare (one per user selection), so starvation is not
-        a concern.  If it ever becomes one, switch to a fair queued lock.
+    Writer starvation: under sustained heavy read load a writer may wait
+    for a quiet moment. In practice writes are rare (one per selection),
+    so this isn't a concern. If it ever is, switch to a fair queued lock.
     """
 
     def __init__(self, source: History | None = None) -> None:

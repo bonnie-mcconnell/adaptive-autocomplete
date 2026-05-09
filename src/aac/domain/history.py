@@ -38,7 +38,7 @@ class History:
     """
     Append-only store of user completion events.
 
-    This is the single source of truth for all learning signals.
+    Append-only store for completion events - the shared learning state.
 
     Design guarantees:
         - Entries are immutable once recorded
@@ -56,17 +56,16 @@ class History:
         ``threading.Lock``, or use one ``History`` instance per thread and
         merge snapshots periodically.
 
-    This class intentionally separates:
-        - In-memory domain representation (HistoryEntry)
-        - Serialized representation (snapshot)
+    Domain representation (HistoryEntry) is kept separate from
+    serialised representation (snapshot) so storage is replaceable.
 
     Performance:
         A prefix index is maintained alongside the entry list so that
         prefix-scoped reads are O(k) in the number of matching entries
         rather than O(n) in the total history length. The index is a
         defaultdict keyed by prefix, holding the list of matching entries
-        in insertion order. This adds one dict write per record() call
-        and no overhead on reads.
+        in insertion order. Cost: one extra dict write per record() call,
+        zero overhead on reads.
 
         Tradeoff: the index holds references to the same HistoryEntry
         objects as _entries, so memory overhead is one pointer per entry,
@@ -212,8 +211,8 @@ class History:
 
             counts_for_prefix(prefix).get(value, 0)
 
-        This method is intended for inspection, diagnostics, and tests only.
-        It is not used by any predictor or ranker in this library.
+        Intended for inspection, diagnostics, and tests only.
+        Not used by any predictor or ranker in this library.
 
         Parameters:
             value: Completion value to count.
@@ -283,9 +282,8 @@ class History:
     def __repr__(self) -> str:
         """Return a diagnostic summary showing entry count and prefix count.
 
-        Useful during debugging sessions when inspecting ``engine.history``
-        or a standalone ``History`` instance.  The format is intentionally
-        concise so it fits on one line in a REPL or trace log.
+        Useful when inspecting ``engine.history`` or a standalone
+        ``History`` instance in a REPL or trace log.
 
         Example::
 

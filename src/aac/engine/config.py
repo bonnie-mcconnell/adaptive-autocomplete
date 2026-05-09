@@ -170,7 +170,6 @@ def _register_builtins() -> None:
     from aac.predictors.symspell import SymSpellPredictor
     from aac.predictors.trie import TriePrefixPredictor
     from aac.predictors.trigram import TrigramPredictor
-    from aac.domain.types import Predictor
 
     def _freq(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
         from aac.data import load_english_frequencies
@@ -422,7 +421,6 @@ class EngineConfig:
         from aac.domain.history import History
         from aac.domain.types import WeightedPredictor
         from aac.engine.engine import AutocompleteEngine
-        from aac.ranking.base import Ranker
         from aac.ranking.decay import DecayFunction, DecayRanker
         from aac.ranking.learning import LearningRanker
         from aac.ranking.score import ScoreRanker
@@ -504,7 +502,7 @@ class EngineConfig:
             if a is None:
                 # b cannot be None here: the loop iterates set(self_preds) | set(other_preds),
                 # so every name is in at least one dict.  If a is None, b must be present.
-                # This is a programming error (violated loop invariant), not user input,
+                # Programming error (violated loop invariant), not user input,
                 # so a RuntimeError is appropriate - but we avoid bare assert which is
                 # stripped by -O and provides no message.
                 if b is None:

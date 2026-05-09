@@ -11,26 +11,36 @@ class CompletionContext:
     cursor_pos: int | None = None
 
     def prefix(self) -> str:
-        """
-        Return the current completion prefix, normalised to lowercase.
+        """Return the completion prefix, normalised to lowercase.
 
-        Normalisation:
-            All prefixes are lowercased before being returned. The bundled
-            vocabulary is lowercase; case-normalising here means typing
-            "He" and "he" produce the same completions. Callers that need
-            case-sensitive behaviour should construct CompletionContext with
-            pre-normalised text.
+        Case normalisation: all prefixes are lowercased. The bundled
+        vocabulary is lowercase, so normalising here means "He" and "he"
+        produce the same completions. Callers needing case-sensitive
+        behaviour should normalise before constructing CompletionContext.
 
-        Cursor position rules:
-            If cursor_pos is provided, the character immediately before the
-            cursor is considered in-progress and excluded from the prefix.
-            cursor_pos is clamped to [0, len(text)], so out-of-range values
-            are safe and return the longest valid prefix.
+        Cursor position model:
+        When ``cursor_pos`` is given, the character immediately before the
+        cursor is considered the one still being typed and is excluded from
+        the prefix. This matches the behaviour of text-editor completion
+        triggers: when the user presses a completion key mid-word, the
+        engine should complete *from* the start of the partial token, not
+        *including* the character under the cursor.
 
-            Examples (cursor_pos counts characters from the start of text):
-                text="git ch", cursor_pos=6  ->  "c"   (cursor at end: "h" in-progress)
-                text="git ch", cursor_pos=5  ->  ""    (cursor before "c": whole token in-progress)
-                text="he", cursor_pos=None   ->  "he"  (full text, no cursor)
+        Example with text="git ch", cursor_pos=6 (cursor at end):
+          - The last token before the cursor is "ch"
+          - "h" is in-progress, so prefix is "c"
+          - The engine suggests words starting with "c" (checkout, clone…)
+
+        To use full-token completion instead (treating the whole last word
+        as the prefix), pass ``cursor_pos=None`` or omit it.
+
+        ``cursor_pos`` is clamped to [0, len(text)]; out-of-range values
+        are safe and return the longest valid prefix.
+
+        Examples:
+            text="git ch", cursor_pos=6  →  "c"
+            text="git ch", cursor_pos=5  →  ""   (cursor before "c")
+            text="he", cursor_pos=None   →  "he" (full token)
         """
         if self.cursor_pos is not None:
             before = self.text[: self.cursor_pos]

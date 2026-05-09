@@ -146,8 +146,8 @@ class EvaluationHarness:
     Evaluate an engine against a labelled query log.
 
     The harness is constructed once and can evaluate multiple engines
-    without rebuilding. This is intentional: you want to compare engines
-    on the same log, not rebuild the log for each engine.
+    without rebuilding. Reuse one harness across multiple engines
+    to compare them on an identical query log.
 
     Parameters:
         query_log: The labelled dataset. See ``aac.evaluation.datasets``.

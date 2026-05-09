@@ -177,13 +177,10 @@ class FrequencyPredictor(Predictor):
         if frequency > self._max_freq:
             self._max_freq = frequency
             self._log_max = math.log1p(self._max_freq)
-        # Note: _log_max only grows, never shrinks.  This is intentional.
-        # Log-normalisation requires a stable denominator so that scores
-        # already returned to callers remain consistent with future calls.
-        # If a word with lower frequency is added, the denominator stays put
-        # and the new word's score is computed relative to the existing max -
-        # which is the correct semantics: the new word is less common than
-        # the most common word already in the vocabulary.
+        # _log_max only grows, never shrinks. Log-normalisation needs a
+        # stable denominator: scores already returned to callers must remain
+        # consistent. A new word with lower frequency is scored against the
+        # existing max - correct, since it's less common than the current peak.
 
         # Update prefix index for all prefixes of this word.
         for length in range(1, len(word)):

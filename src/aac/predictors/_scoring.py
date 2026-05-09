@@ -27,7 +27,7 @@ The weight is set so that:
       dist-2, freq=max: (1/3) * (1 + 0.5 * 1) = 0.500  ← tied at the extreme
   In practice distance-1 words have non-zero frequency and always lead.
 
-This keeps distance strictly dominant while giving frequency real power
+Distance stays strictly dominant while frequency has real power
 within each bucket. The old additive formula capped frequency at 10% of
 the distance score, making it nearly invisible in practice.
 """

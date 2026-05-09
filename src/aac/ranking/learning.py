@@ -146,6 +146,17 @@ class LearningRanker(Ranker, LearnsFromHistory):
         )
         return (-final_score, index)
 
+    def ranker_config(self) -> dict[str, float]:
+        """Return the parameters needed to reconstruct this ranker.
+
+        Used by WeightOptimiser and engine serialisation to copy ranker
+        configuration without accessing private attributes directly.
+        """
+        return {
+            "boost": self._boost,
+            "dominance_ratio": self._dominance_ratio,
+        }
+
     # --- ranking ---
 
     def rank(

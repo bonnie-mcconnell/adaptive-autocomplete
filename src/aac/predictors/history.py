@@ -26,10 +26,9 @@ class HistoryPredictor(Predictor):
 
             score = log(1 + count) / log(1 + max_count_for_prefix)
 
-        This keeps HistoryPredictor's scores in the same (0, 1] space as
-        FrequencyPredictor, so that weights in WeightedPredictor are
-        meaningful. A weight of 1.5 on HistoryPredictor means 1.5× the
-        frequency signal, not 1.5 raw selection counts.
+        Log-normalised to (0, 1] to match FrequencyPredictor's range,
+        so weights in WeightedPredictor are directly comparable. A weight
+        of 1.5 means 1.5× the frequency signal, not 1.5 raw counts.
 
     Confidence reflects dominance among historical matches.
     """

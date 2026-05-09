@@ -4,11 +4,9 @@ WeightOptimiser: automated predictor weight tuning.
 Finds the predictor weight combination that maximises a chosen metric
 (default: MRR@10) over a labelled query log.
 
-Key design: predictors are built ONCE at construction time, not once per
-evaluation. Only the weights change between evaluations. This makes tuning
-over the production preset (10s to build SymSpell) practical:
-    - Without caching: 27 evals × 10s/build = 270s
-    - With caching:    27 evals × 2ms/eval  = 0.05s
+Predictors are built once at construction time; only weights change
+between evaluations. Without this caching, tuning over the production
+preset would cost ~270s (27 evals × 10s/build). With it: ~0.05s.
 
 Two strategies:
 
@@ -227,18 +225,20 @@ class WeightOptimiser:
             if isinstance(template, ScoreRanker):
                 fresh_rankers.append(ScoreRanker())
             elif isinstance(template, DecayRanker):
+                cfg = template.ranker_config()
                 fresh_rankers.append(DecayRanker(
                     history=history,
                     decay=DecayFunction(
-                        half_life_seconds=template._decay.half_life_seconds
+                        half_life_seconds=cfg["half_life_seconds"]
                     ),
-                    weight=template._weight,
+                    weight=cfg["weight"],
                 ))
             elif isinstance(template, LearningRanker):
+                cfg = template.ranker_config()
                 fresh_rankers.append(LearningRanker(
                     history=history,
-                    boost=template._boost,
-                    dominance_ratio=template._dominance_ratio,
+                    boost=cfg["boost"],
+                    dominance_ratio=cfg["dominance_ratio"],
                 ))
             else:
                 # Unknown ranker type - fall back to reusing the template.
@@ -261,8 +261,8 @@ class WeightOptimiser:
         evaluations). Only the weight wrappers are recreated per evaluation.
         Rankers are rebuilt cheaply (no index - they only wrap History lookups).
 
-        This reduces per-evaluation cost from O(index_build_time) to O(n_predictors).
-        For the production preset: from ~5s to ~2ms per evaluation.
+        Reduces per-evaluation cost from O(index_build_time) to O(n_predictors).
+        For the production preset: ~5s → ~2ms per evaluation.
         """
         from aac.domain.history import History
         from aac.domain.types import WeightedPredictor
