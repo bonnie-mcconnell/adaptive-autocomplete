@@ -29,9 +29,7 @@ def run(
     of the base score (``base_components``) and per-ranker breakdown
     of the boost (``history_components``).
 
-    This is a presentation-layer adapter:
-    - No scoring logic lives here
-    - Output is intentionally human-readable
+    Presentation-layer only - no scoring logic here.
     """
     explanations = engine.explain(text)
     if limit is not None:

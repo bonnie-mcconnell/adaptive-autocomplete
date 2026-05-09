@@ -530,7 +530,15 @@ document.getElementById("record-btn").addEventListener("click", async () => {
   btn.disabled = true;
   btn.textContent = "recording…";
 
-  await apiFetch(`/record?q=${encodeURIComponent(q)}&value=${encodeURIComponent(selectedWord)}`);
+  // POST /record: recording a selection mutates state and must not be a GET.
+  // GET requests can be prefetched by browsers and link scanners.
+  try {
+    const body = new URLSearchParams({ q, value: selectedWord });
+    const r = await fetch(API + "/record", { method: "POST", body });
+    if (!r.ok) throw new Error(r.statusText);
+  } catch (e) {
+    setStatus("error: " + e.message, true);
+  }
 
   btn.textContent = "recorded ✓";
   setStatus(`recorded "${selectedWord}" for "${q}"`, false, true);

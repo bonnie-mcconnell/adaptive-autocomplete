@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 
 from aac.cli._demo_html import _DEMO_HTML  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # HTTP request handler
 # ---------------------------------------------------------------------------
@@ -116,17 +115,6 @@ def _make_handler(
                     for e in exps
                 ]
                 self._send_json(data)
-            elif path == "/record":
-                # Accept GET for backward compatibility with browser JS fetch()
-                # calls that use the simpler GET API. Real deployments should
-                # use POST /record (do_POST below) to respect HTTP semantics -
-                # recording a selection is a state mutation and must not be
-                # issued as a GET request (browsers may prefetch GET URLs).
-                q = (qs.get("q", [""])[0]).strip()
-                value = (qs.get("value", [""])[0]).strip()
-                if q and value:
-                    self._engine.record_selection(q, value)
-                self._send_json({"recorded": bool(q and value)})
             elif path == "/compare":
                 q = (qs.get("q", [""])[0]).strip()
                 try:
