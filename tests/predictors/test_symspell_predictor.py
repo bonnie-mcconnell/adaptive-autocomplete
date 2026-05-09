@@ -543,7 +543,7 @@ class TestAdaptiveSymSpellExactMatchExclusion:
             results = {s.suggestion.value for s in p.predict(query)}
             assert query not in results, (
                 f"AdaptiveSymSpellPredictor returned the query {query!r} as a "
-                f"suggestion for itself. This is the exact-match regression: "
+                f"suggestion for itself (exact-match regression): "
                 f"the old predict() method injected prefix at score=max(1.0,...) "
                 f"which caused it to appear as the top result."
             )
@@ -563,7 +563,7 @@ class TestAdaptiveSymSpellExactMatchExclusion:
         results = engine.suggest("programing", limit=5)
         assert "programing" not in results, (
             f"'programing' appeared in its own results: {results}. "
-            f"This is the AdaptiveSymSpellPredictor exact-match regression."
+            f"AdaptiveSymSpellPredictor exact-match regression."
         )
         assert results and results[0] == "programming", (
             f"Expected 'programming' at rank 1, got: {results[:3]}"

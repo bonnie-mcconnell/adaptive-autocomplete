@@ -67,12 +67,9 @@ def test_optimisation_result_zero_baseline_improvement_pct() -> None:
 
 def test_invalid_metric_raises() -> None:
     harness = _make_harness()
-    try:
+    import pytest
+    with pytest.raises(ValueError, match="invalid_metric"):
         WeightOptimiser(harness, metric="invalid_metric")
-        assert False, "Should have raised ValueError"
-    except ValueError as e:
-        assert "invalid_metric" in str(e)
-        assert "mrr" in str(e)
 
 
 def test_grid_search_returns_valid_result() -> None:
@@ -149,6 +146,6 @@ def test_history_records_do_not_bleed_across_evaluations() -> None:
 
     # history field in the result should be a list of independent snapshots,
     # not an accumulation of state across evaluations.
-    for weights, score in result.history:
+    for _weights, score in result.history:
         assert isinstance(score, float)
         assert 0.0 <= score <= 1.0

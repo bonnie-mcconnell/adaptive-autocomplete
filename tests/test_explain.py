@@ -12,7 +12,7 @@ Three correctness properties verified here:
 
 3. base_components completeness: explain() returns a base_components dict with
    an entry for every configured predictor - including predictors that returned
-   no candidates for this prefix (those get 0.0, not a missing key). This makes
+   no candidates for this prefix (those get 0.0, not a missing key).
    the difference between "predictor ran but found nothing" and "predictor not
    configured" explicit.
 """

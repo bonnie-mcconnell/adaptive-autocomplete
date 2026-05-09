@@ -163,7 +163,7 @@ class TestDeletes:
         SymSpellPredictor must find other 1-char words as edit-distance-1
         candidates. 'b', 'c', 'd' are all edit-distance 1 from 'a'
         (one substitution), and SymSpell finds this via the shared '' key.
-        This verifies the '' key is preserved in the index, not filtered out.
+        Verifies the '' key is preserved in the index, not filtered out.
         """
         vocab = ["a", "b", "c", "d"]
         predictor = SymSpellPredictor(vocab, max_distance=1)

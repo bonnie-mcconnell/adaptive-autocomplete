@@ -5,6 +5,7 @@ PredictorContractTestMixin invariants. Add new predictors here.
 from __future__ import annotations
 
 from aac.domain.history import History
+from aac.domain.types import Predictor
 from aac.predictors.adaptive_symspell import AdaptiveSymSpellPredictor
 from aac.predictors.edit_distance import EditDistancePredictor
 from aac.predictors.frequency import FrequencyPredictor
@@ -13,7 +14,6 @@ from aac.predictors.static_prefix import StaticPrefixPredictor
 from aac.predictors.symspell import SymSpellPredictor
 from aac.predictors.trie import TriePrefixPredictor
 from aac.predictors.trigram import TrigramPredictor
-from aac.domain.types import Predictor
 from tests.contracts.predictor_contract import PredictorContractTestMixin
 
 _VOCAB = ["hello", "help", "helium", "hero", "world"]

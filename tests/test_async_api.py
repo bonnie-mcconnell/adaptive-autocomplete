@@ -120,7 +120,7 @@ async def test_record_async_multiple_words_correct_order() -> None:
 def test_suggest_async_requires_running_loop() -> None:
     """
     suggest_async() must raise RuntimeError when called outside a running loop.
-    This is the expected behaviour of asyncio.get_running_loop() - it makes
+    Expected behaviour of asyncio.get_running_loop() - it makes
     misuse explicit rather than silently creating a new event loop.
     """
     engine = create_engine("stateless")

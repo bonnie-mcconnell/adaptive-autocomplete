@@ -8,8 +8,6 @@ duplicating the engine construction boilerplate.
 """
 from __future__ import annotations
 
-import pytest
-
 from aac.domain.history import History
 from aac.domain.types import WeightedPredictor
 from aac.engine.engine import AutocompleteEngine
@@ -79,6 +77,7 @@ class TestResetHistory:
         """reset_history() clears in-memory state only; a JsonHistoryStore is unaffected."""
         import tempfile
         from pathlib import Path
+
         from aac.storage.json_store import JsonHistoryStore
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -133,7 +132,7 @@ class TestPredictorLearnsFromHistoryProtocol:
     def test_stateless_predictor_is_not_updated_by_reset(self) -> None:
         """A predictor with no 'history' attribute must not be touched by reset_history().
 
-        This verifies the most important protection: predictors that don't opt in
+        Verifies the most important protection: predictors that don't opt in
         to the protocol are left completely untouched.
         """
         class _StatelessPredictor:

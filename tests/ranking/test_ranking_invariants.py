@@ -113,7 +113,7 @@ def test_learning_ranker_explain_uses_pre_boost_base_score() -> None:
 
     The full pre-ranking base score is surfaced by engine.explain(), which
     derives it directly from _score() and is immune to ranker composition.
-    This test verifies:
+    Verifies:
       1. ranker.explain() produces boost=5.0 (capped at 0.5 * pre-boost base)
       2. ranker.explain() base_score=0.0 (boost ranker, not a base ranker)
       3. engine.explain() surfaces base_score=10.0 (true predictor base)

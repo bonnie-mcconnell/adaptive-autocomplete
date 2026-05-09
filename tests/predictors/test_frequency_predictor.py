@@ -5,7 +5,7 @@ import math
 import pytest
 
 from aac.domain.types import CompletionContext
-from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
+from aac.predictors.frequency import _DEFAULT_MAX_RESULTS, FrequencyPredictor
 
 
 @pytest.fixture()
@@ -98,7 +98,7 @@ class TestFrequencyPredictorIndexCorrectness:
 
     def test_exact_match_not_in_index(self) -> None:
         """A word must not appear in results when the prefix equals the word exactly."""
-        from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
+        from aac.predictors.frequency import FrequencyPredictor
         vocab = {"hello": 100, "help": 80}
         predictor = FrequencyPredictor(vocab)
         results = [s.value for s in predictor.predict("hello")]
@@ -106,7 +106,7 @@ class TestFrequencyPredictorIndexCorrectness:
 
     def test_index_does_not_contain_exact_match_key(self) -> None:
         """The internal index must not store any word under its own full string."""
-        from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
+        from aac.predictors.frequency import FrequencyPredictor
         vocab = {"hi": 10, "hello": 100}
         predictor = FrequencyPredictor(vocab)
         assert "hi" not in predictor._index
@@ -117,12 +117,12 @@ class TestFrequencyPredictorValidation:
     """FrequencyPredictor must reject invalid construction arguments."""
 
     def test_max_results_less_than_one_raises(self) -> None:
-        from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
+        from aac.predictors.frequency import FrequencyPredictor
         with pytest.raises(ValueError, match="max_results"):
             FrequencyPredictor({"hello": 1}, max_results=0)
 
     def test_empty_frequencies_raises(self) -> None:
-        from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
+        from aac.predictors.frequency import FrequencyPredictor
         with pytest.raises(ValueError, match="frequencies must not be empty"):
             FrequencyPredictor({})
 

@@ -66,7 +66,7 @@ class TestCliRoundTrip:
         """One recording of 'zealous' causes it to rank above 'zed' (same corpus freq=10).
 
         Both words have identical corpus frequency so only the history signal
-        separates them.  This verifies learning reaches the engine without
+        separates them.  Verifies learning reaches the engine without
         depending on overcoming a large frequency gap.
         """
         history = tmp_path / "history.json"

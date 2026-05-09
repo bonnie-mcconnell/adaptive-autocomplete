@@ -124,7 +124,7 @@ def test_engine_raises_if_ranker_adds_suggestions() -> None:
     """
     The engine must raise RuntimeError if a ranker adds suggestions.
 
-    This is the most critical invariant in the engine: rankers may only
+    The most critical invariant in the engine: rankers may only
     reorder and rescore, never add or remove. The check uses RuntimeError
     (not assert, which is disabled under -O) so it fires in production.
     """

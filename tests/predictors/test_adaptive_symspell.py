@@ -3,7 +3,7 @@ Tests for AdaptiveSymSpellPredictor.
 
 The adaptive predictor dispatches to two internal SymSpell indexes based on
 prefix length: a tight index (max_distance=1) for short prefixes and a full
-index (max_distance=N) for longer ones.  This prevents hundreds of noise
+index (max_distance=N) for longer ones, preventing hundreds of noise
 candidates on 1-3 char queries while preserving full typo recovery for 4+ chars.
 """
 from __future__ import annotations

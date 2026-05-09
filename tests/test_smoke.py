@@ -49,16 +49,15 @@ def test_engine_explain_returns_reconciled_scores() -> None:
 
 def test_scoring_constants_shared_across_predictors() -> None:
     """
-    All distance-based predictors must share the same FREQ_WEIGHT constant
-    via aac.predictors._scoring. This ensures scores are directly comparable
-    when mixed in a weighted predictor stack.
+    All distance-based predictors share the same FREQ_WEIGHT constant
+    via aac.predictors._scoring, so their scores are directly comparable
+    when combined in a weighted predictor stack.
 
-    Previously FREQ_WEIGHT=0.5 was a local variable duplicated inside
-    __init__ in both symspell.py and trigram.py. If one was changed without
-    the other, scores would become incomparable. Now all three distance
-    predictors import from the single source of truth in _scoring.py.
-    EditDistancePredictor previously used the old formula (no freq multiplier)
-    and accepted no frequencies parameter at all - fixed in this session.
+    Previously FREQ_WEIGHT=0.5 was duplicated inside __init__ in both
+    symspell.py and trigram.py. Divergence between them would silently
+    break score comparability. The shared _scoring module is the single
+    source of truth. EditDistancePredictor also uses it and accepts a
+    frequencies mapping for consistent weighting.
     """
     from aac.predictors._scoring import FREQ_WEIGHT, distance_score, edit_confidence
     from aac.predictors.edit_distance import EditDistancePredictor
@@ -68,9 +67,12 @@ def test_scoring_constants_shared_across_predictors() -> None:
     vocab = ["hello", "help", "world", "programming"]
     freqs = {"hello": 100, "help": 80, "world": 200, "programming": 50}
 
-    symspell = SymSpellPredictor(vocab, frequencies=freqs)
-    trigram = TrigramPredictor(vocab, frequencies=freqs)
     edit_dist = EditDistancePredictor(vocab, frequencies=freqs)
+
+    # Verify that all three predictor classes can be instantiated with frequencies
+    # and share the same scoring module without import errors.
+    assert SymSpellPredictor(vocab, frequencies=freqs).name == "symspell"
+    assert TrigramPredictor(vocab, frequencies=freqs).name == "trigram"
 
     # All three should produce the same score for a word at distance=0,
     # using the shared formula.
@@ -90,17 +92,18 @@ def test_scoring_constants_shared_across_predictors() -> None:
 def test_demo_run_accepts_host_parameter() -> None:
     """demo.run() must accept a host parameter.
 
-    This was a real functional bug: Dockerfile.demo CMD used --host 0.0.0.0
+    Real bug: Dockerfile.demo CMD used --host 0.0.0.0
     but demo.run() had no host parameter and HTTPServer was hardcoded to
     127.0.0.1. docker compose up would start a container that silently bound
     to localhost inside the container, making the demo unreachable from the
     host even though the port was exposed.
 
-    This test verifies the fix: host is plumbed all the way through to
+    Verifies: host is plumbed all the way through to
     HTTPServer. We don't start a real server; we just confirm the signature
     is correct so the Dockerfile CMD won't fail at startup.
     """
     import inspect
+
     from aac.cli.demo import run as demo_run
 
     sig = inspect.signature(demo_run)
@@ -116,7 +119,7 @@ def test_demo_run_accepts_host_parameter() -> None:
 def test_readme_typo_examples_match_actual_output() -> None:
     """Pin the specific outputs shown in the README typo-recovery section.
 
-    This test exists to catch README drift: if engine scoring changes cause
+    Catches README drift: if engine scoring changes cause
     the actual output to differ from what the README documents, this test
     fails and forces the README to be updated before the change ships.
 

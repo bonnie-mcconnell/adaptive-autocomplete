@@ -179,11 +179,10 @@ class TestRecordSelectionKeyCorrectness:
 def test_record_selection_calls_typed_protocol_not_getattr() -> None:
     """
     record_selection() must use PredictorAcceptsRecord isinstance check,
-    not getattr duck typing.  This test verifies that:
+    not getattr duck typing.  Verifies that:
     1. A predictor implementing the protocol has its record() called.
     2. A predictor with an unrelated .record attribute is NOT called.
     """
-    from aac.domain.types import CompletionContext
     from aac.ranking.contracts import PredictorAcceptsRecord
 
     record_calls: list[tuple[str, str]] = []
@@ -215,7 +214,6 @@ def test_record_selection_with_non_callable_record_attr_does_not_raise() -> None
     even though it cannot be called. This is a known Python limitation documented in
     PEP 544. The engine must guard the call with callable() to avoid AttributeError.
     """
-    from aac.domain.types import CompletionContext
     from aac.ranking.contracts import PredictorAcceptsRecord
 
     class _PredictorWithStringRecord:
@@ -293,7 +291,7 @@ def test_suggest_full_single_pipeline_consistency() -> None:
     and suggest_with_confidence() calls made in the same state (no intervening
     record_selection()). Values must appear in the same order.
 
-    This test documents the contract: suggest_full() is a single-pass
+    Contract: suggest_full() is a single-pass
     equivalent of the two-call pattern. It does NOT test that only one
     pipeline run occurs (that's an implementation detail), but it does verify
     the output is consistent.

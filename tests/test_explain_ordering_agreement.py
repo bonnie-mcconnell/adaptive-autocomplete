@@ -2,7 +2,7 @@
 Critical invariant: explain() must return suggestions in the same order
 as suggest() for the same input.
 
-This is the most important behavioural guarantee of the engine that
+The most important behavioural guarantee of the engine that
 had no direct test. If explain() and suggest() diverge in ordering,
 the explanation shown to a user describes a *different* ranking than
 the one they actually see. That makes explain() useless for debugging.
@@ -109,7 +109,7 @@ def test_explain_order_stable_after_multiple_selections() -> None:
 def test_explain_final_scores_match_ranked_order() -> None:
     """
     explain() final_score values must be non-increasing (highest-ranked = highest score).
-    This verifies the explanation scores are consistent with the sort order.
+    Verifies the explanation scores are consistent with the sort order.
     """
     engine = create_engine("production")
     engine.record_selection("prog", "programming")
@@ -126,7 +126,7 @@ def test_explain_final_scores_match_ranked_order() -> None:
 def test_limit_does_not_affect_order() -> None:
     """
     suggest(text, limit=k) must return the first k items of suggest(text).
-    This verifies the limit path doesn't re-sort or otherwise change order.
+    Verifies the limit path doesn't re-sort or otherwise change order.
     """
     engine = create_engine("production")
     full = engine.suggest("pro")

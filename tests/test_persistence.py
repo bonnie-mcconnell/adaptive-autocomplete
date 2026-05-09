@@ -256,7 +256,7 @@ class TestJsonStoreExceptionCleanup:
         history.record("he", "hello")
 
         # Patch os.fdopen as imported by json_store, not the global os module.
-        # This is the call that actually opens the fd for writing; raising here
+        # This call opens the fd for writing; raising here
         # exercises the except/unlink cleanup path on every platform.
         with patch("aac.storage.json_store.os.fdopen", side_effect=OSError("disk full")):
             with pytest.raises(OSError, match="disk full"):
@@ -269,7 +269,7 @@ class TestJsonStoreExceptionCleanup:
     def test_fd_closed_before_unlink_when_fdopen_raises(self, tmp_path: Path) -> None:
         """When os.fdopen raises, the raw fd is explicitly closed before unlink.
 
-        This ensures we don't leak the fd and, on Windows, allows os.unlink
+        Ensures we don't leak the fd and, on Windows, allows os.unlink
         to succeed (Windows cannot unlink an open file).  We verify the fd
         close by patching os.close and confirming it is called when
         fd_owned_by_file is False (i.e. fdopen raised before taking ownership).
