@@ -40,7 +40,8 @@ except ImportError as e:  # pragma: no cover
         "Install it with: pip install fastapi uvicorn"
     ) from e
 
-from aac import ThreadSafeHistory, __version__ as _aac_version
+from aac import ThreadSafeHistory
+from aac import __version__ as _aac_version
 from aac.engine.engine import AutocompleteEngine
 from aac.presets import create_engine
 from aac.storage.json_store import JsonHistoryStore
