@@ -175,6 +175,12 @@ def _make_handler(
                     })
 
                 self._send_json({"presets": preset_names, "rows": rows})
+            elif path == "/record":
+                q = (qs.get("q", [""])[0]).strip()
+                value = (qs.get("value", [""])[0]).strip()
+                if q and value:
+                    self._engine.record_selection(q, value)
+                self._send_json({"recorded": bool(q and value)})
             elif path == "/health":
                 # Docker healthcheck endpoint.
                 self._send_json({"status": "ok", "preset": self._preset})

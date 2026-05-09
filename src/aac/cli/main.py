@@ -32,6 +32,17 @@ def _add_preset_arg(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_global_preset_arg(p: argparse.ArgumentParser) -> None:
+    """Add --preset at the top level so callers can place it before the subcommand."""
+    p.add_argument(
+        "--preset",
+        dest="preset_global",
+        default="production",
+        choices=available_presets(),
+        help=_PRESET_HELP,
+    )
+
+
 def _add_shared_args(p: argparse.ArgumentParser) -> None:
     """Add --preset, --history-path, --vocab-path, --vocab-format to a subparser."""
     _add_preset_arg(p)
@@ -97,6 +108,7 @@ def main() -> None:
         dest="history_path_global",
         help=f"Path to persisted history file (default: {DEFAULT_HISTORY_PATH})",
     )
+    _add_global_preset_arg(parser)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -389,10 +401,19 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Resolve history_path: subcommand-local --history-path wins; global fallback
-    # lets users write `aac --history-path /path record he hello` (global form).
-    if not hasattr(args, "history_path"):
-        args.history_path = args.history_path_global
+    # Resolve preset/history_path:
+    # - global flags win when supplied before the subcommand
+    # - subcommand-local flags still work when provided after the subcommand
+    if getattr(args, "preset_global", None) is not None:
+        if not hasattr(args, "preset") or args.preset == "production":
+            args.preset = args.preset_global
+
+    # Resolve history_path:
+    # - subcommand-local --history-path wins when explicitly supplied after the subcommand
+    # - otherwise the global --history-path applies, so `aac --history-path /path record ...` works
+    if getattr(args, "history_path_global", None) is not None:
+        if not hasattr(args, "history_path") or args.history_path == DEFAULT_HISTORY_PATH:
+            args.history_path = args.history_path_global
 
     try:
         _run(args)
