@@ -1,6 +1,7 @@
+"""EditDistancePredictor: BK-tree based fuzzy matching. Falls back to linear scan at large vocab."""
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from aac.domain.types import (
     CompletionContext,
@@ -10,6 +11,7 @@ from aac.domain.types import (
     Suggestion,
     ensure_context,
 )
+from aac.predictors._scoring import build_freq_scores, distance_score, edit_confidence
 from aac.predictors.bk_tree import BKTree, levenshtein
 
 __all__ = ["EditDistancePredictor", "levenshtein"]
@@ -28,6 +30,14 @@ class EditDistancePredictor(Predictor):
         subtrees that cannot contain results without evaluating them.
         All words within max_distance edits are returned without exception,
         including cases where the first character differs from the query.
+
+    Scoring:
+        Uses the shared formula from ``aac.predictors._scoring``:
+        ``base_score / (1 + distance) * (1 + FREQ_WEIGHT * freq_score)``.
+        Scores are directly comparable with SymSpellPredictor and
+        TrigramPredictor when combined in a weighted predictor stack.
+        When ``frequencies`` is not provided, the frequency multiplier
+        is 1.0 (equivalent to freq_score=0.0) - distance-only ranking.
 
     Performance characteristics:
         BK-tree pruning degrades when max_distance is large relative to
@@ -53,11 +63,15 @@ class EditDistancePredictor(Predictor):
         *,
         max_distance: int = 2,
         base_score: float = 1.0,
+        frequencies: Mapping[str, int] | None = None,
     ) -> None:
         self._max_distance = max_distance
         self._base_score = base_score
         # BKTree filters empty strings internally; pass vocabulary directly.
         self._tree = BKTree(vocabulary)
+        # Pre-computed log-normalised frequency scores.
+        # Formula and FREQ_WEIGHT rationale: see aac.predictors._scoring
+        self._freq_scores: dict[str, float] = build_freq_scores(frequencies)
 
     def predict(self, ctx: CompletionContext | str) -> list[ScoredSuggestion]:
         ctx = ensure_context(ctx)
@@ -68,9 +82,10 @@ class EditDistancePredictor(Predictor):
 
         results: list[ScoredSuggestion] = []
 
-        for word, distance in self._tree.search(prefix, max_distance=self._max_distance):
-            score = self._base_score / (1 + distance)
-            confidence = max(0.0, 1.0 - (distance / (self._max_distance + 1)))
+        for word, dist in self._tree.search(prefix, max_distance=self._max_distance):
+            freq_score = self._freq_scores.get(word, 0.0)
+            score = distance_score(self._base_score, dist, freq_score)
+            confidence = edit_confidence(dist, self._max_distance)
 
             results.append(
                 ScoredSuggestion(

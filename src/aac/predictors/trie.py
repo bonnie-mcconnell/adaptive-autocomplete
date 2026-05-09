@@ -1,3 +1,4 @@
+"""TriePrefixPredictor: exact prefix matching via a compressed trie. O(|prefix|) lookup."""
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -91,11 +92,18 @@ class TriePrefixPredictor(Predictor):
         - ``HistoryPredictor`` adds selection-count scores so recently
           chosen words rise above alphabetically-early ones.
         - Without either, equal scores produce alphabetical output.
+
+    Parameters:
+        words:       Iterable of vocabulary words to index.
+        max_results: Maximum candidates returned per query. Default: 100.
+                     Matches ``FrequencyPredictor``'s default. The old default
+                     of 10 silently truncated high-branching prefixes like "s"
+                     (5,000+ words in the English vocabulary).
     """
 
     name = "trie_prefix"
 
-    def __init__(self, words: Iterable[str], *, max_results: int = 10) -> None:
+    def __init__(self, words: Iterable[str], *, max_results: int = 100) -> None:
         self._trie = Trie(words)
         self._max_results = max_results
 

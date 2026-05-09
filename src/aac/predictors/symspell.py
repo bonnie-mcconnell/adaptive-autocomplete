@@ -41,7 +41,6 @@ https://wolfgarbe.medium.com/1000x-faster-spelling-correction-algorithm-using-sy
 """
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
@@ -53,6 +52,7 @@ from aac.domain.types import (
     Suggestion,
     ensure_context,
 )
+from aac.predictors._scoring import build_freq_scores, distance_score, edit_confidence
 from aac.predictors.bk_tree import levenshtein
 
 _DEFAULT_MAX_DISTANCE = 2
@@ -63,11 +63,20 @@ def _deletes(word: str, max_distance: int) -> frozenset[str]:
     Return all strings reachable from word by up to max_distance deletions.
 
     For word='hello', max_distance=1:
-        {'ello', 'hllo', 'helo', 'hell', 'hell'}
+        {'ello', 'hllo', 'helo', 'hell'}
         (deduplicated: 4 unique strings)
 
     The original word is NOT included - the map key is always a
     deleted form, and the value is the original vocabulary word.
+
+    The empty string '' may appear in the output for short words
+    (e.g. _deletes('a', 1) returns {''}). This is correct and necessary
+    for SymSpell correctness: both 'a' and 'b' map to '' at distance 1,
+    so sharing the '' key is how the algorithm identifies that 'a' and 'b'
+    are substitution candidates (edit distance 1). Similarly, 2-char words
+    and 2-char queries both generate '' at max_distance=2, which is how
+    SymSpell finds all pairs of short words within max_distance of each other.
+    Filtering '' would introduce false negatives for short-word matching.
     """
     deletes: set[str] = set()
     queue: set[str] = {word}
@@ -128,9 +137,6 @@ class SymSpellPredictor(Predictor):
     ) -> None:
         self._max_distance = max_distance
         self._base_score = base_score
-
-        # Map from deleted-form -> set of original vocabulary words
-        # that produce this deleted form.
         delete_map: dict[str, set[str]] = defaultdict(set)
 
         vocab_list = list(vocabulary)
@@ -143,54 +149,21 @@ class SymSpellPredictor(Predictor):
             for d in _deletes(word, max_distance):
                 delete_map[d].add(word)
 
-        # Freeze to regular dicts for faster lookup
+        # Freeze to regular dicts for faster lookup.
+        # Note: the empty string '' IS a valid key. It is needed for SymSpell
+        # to correctly find short-word candidates: a 1-char word 'a' generates
+        # '' as a distance-1 delete; a 2-char query 'he' generates '' as a
+        # distance-2 delete. Both mapping to '' is how SymSpell identifies that
+        # 'a' and 'he' are within edit distance 2 of each other (which they are:
+        # two substitutions). Filtering '' would cause false negatives for all
+        # pairs of short words within max_distance of each other.
         self._delete_map: dict[str, frozenset[str]] = {
             k: frozenset(v) for k, v in delete_map.items()
         }
 
-        # Pre-compute log-normalised frequency scores for ranking within
-        # equal-distance groups.
-        #
-        # The old formula was:
-        #   score = base_score / (1 + distance) + freq_bonus
-        # where freq_bonus was capped at 10% of the minimum distance score.
-        # This made frequency nearly invisible: "the" (freq 537k) scored lower
-        # than "tea" (freq 537) for the query "teh" because both are at
-        # distance 2, and the 10% cap on the bonus was smaller than the noise
-        # in the distance scoring.
-        #
-        # The correct model: distance determines the order of buckets;
-        # frequency determines the order within each bucket.
-        #
-        #   score = base_score / (1 + distance) * (1 + FREQ_WEIGHT * freq_score)
-        #
-        # where freq_score = log(1+f) / log(1+max_f) ∈ (0, 1].
-        # FREQ_WEIGHT = 0.5 means a maximally frequent word scores 1.5×
-        # the base for its distance bucket, while a rare word scores 1.0×.
-        # This keeps distance strictly dominant across buckets (a distance-1
-        # word with freq=1 scores 0.5 * 1.0 = 0.5; a distance-2 word with
-        # freq=max scores 0.333 * 1.5 = 0.5 - exactly tied, which is the
-        # crossover point intentionally) while giving frequency real power
-        # within each bucket.
-        #
-        # FREQ_WEIGHT = 0.5 was chosen so that:
-        # - At the same distance, the highest-frequency word scores 1.5× the
-        #   lowest-frequency word (meaningful separation).
-        # - A maximally frequent distance-2 word never beats a distance-1 word
-        #   of zero frequency (0.333 * 1.5 = 0.5 == 0.5 * 1.0 = 0.5 - tied
-        #   at the extreme; in practice distance-1 words will have non-zero
-        #   frequency and will always lead).
-        _FREQ_WEIGHT = 0.5
-
-        if frequencies:
-            max_freq = max(frequencies.values()) or 1
-            self._freq_score: dict[str, float] = {
-                w: math.log1p(f) / math.log1p(max_freq)
-                for w, f in frequencies.items()
-            }
-        else:
-            self._freq_score = {}
-        self._freq_weight = _FREQ_WEIGHT
+        # Pre-computed log-normalised frequency scores.
+        # Formula and FREQ_WEIGHT rationale: see aac.predictors._scoring
+        self._freq_scores: dict[str, float] = build_freq_scores(frequencies)
 
     def predict(self, ctx: CompletionContext | str) -> list[ScoredSuggestion]:
         ctx = ensure_context(ctx)
@@ -233,10 +206,9 @@ class SymSpellPredictor(Predictor):
             if word == prefix:
                 continue
 
-            freq_score = self._freq_score.get(word, 0.0)
-            distance_score = self._base_score / (1 + distance)
-            score = distance_score * (1.0 + self._freq_weight * freq_score)
-            confidence = max(0.0, 1.0 - (distance / (self._max_distance + 1)))
+            freq_score = self._freq_scores.get(word, 0.0)
+            score = distance_score(self._base_score, distance, freq_score)
+            confidence = edit_confidence(distance, self._max_distance)
 
             results.append(
                 ScoredSuggestion(

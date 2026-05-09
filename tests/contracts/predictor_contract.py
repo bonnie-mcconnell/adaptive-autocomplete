@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
 
-from aac.domain.types import CompletionContext, ScoredSuggestion, Suggestion
+from aac.domain.types import CompletionContext, Predictor, ScoredSuggestion, Suggestion
 
 
 class PredictorContractTestMixin(ABC):
@@ -15,7 +14,7 @@ class PredictorContractTestMixin(ABC):
     """
 
     @abstractmethod
-    def make_predictor(self) -> Any:
+    def make_predictor(self) -> Predictor:
         """Return a predictor instance under test."""
         raise NotImplementedError
 

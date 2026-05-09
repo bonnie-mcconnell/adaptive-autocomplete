@@ -80,16 +80,20 @@ def test_explain_does_not_mutate_history() -> None:
     assert len(history.entries()) == 0
 
 
-def test_explain_as_dicts_schema() -> None:
+def test_explain_as_dicts_not_on_ranker() -> None:
     """
-    LearningRanker.explain_as_dicts() reflects the boost-ranker contract:
-    base_score=0.0 (the ranker contributes boost, not base),
-    history_boost=0.0 (no history for this prefix), final_score=0.0.
-    Use engine.explain_as_dicts() for full base+boost breakdowns.
+    LearningRanker does NOT expose explain_as_dicts().
+    The ranker-level explain() returns a partial schema (boost-only, no base_components).
+    The full schema with base_components and contribution_pct is only available
+    via engine.explain_as_dicts(), which merges all ranker contributions correctly.
+    Exposing explain_as_dicts() directly on the ranker would produce a partial,
+    schema-inconsistent result alongside the engine output.
     """
     ranker = LearningRanker(History())
-    rows = ranker.explain_as_dicts("he", _suggestions("hello", score=0.5))
-    assert rows == [{"value": "hello", "base_score": 0.0, "history_boost": 0.0, "final_score": 0.0}]
+    assert not hasattr(ranker, "explain_as_dicts"), (
+        "LearningRanker.explain_as_dicts() was re-added. "
+        "Use engine.explain_as_dicts() for the full merged schema instead."
+    )
 
 
 # ------------------------------------------------------------------

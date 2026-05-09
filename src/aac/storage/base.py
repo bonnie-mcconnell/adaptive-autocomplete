@@ -1,3 +1,4 @@
+"""HistoryStore protocol: any class implementing load() and save() satisfies it."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

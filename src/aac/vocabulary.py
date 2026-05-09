@@ -156,8 +156,14 @@ def vocabulary_from_file(
     path: str | Path,
     *,
     encoding: str = "utf-8",
-    format: str = "wordlist",  # noqa: A002
-    **kwargs: object,
+    fmt: str = "wordlist",
+    default_frequency: int = 1,
+    strip: bool = True,
+    skip_empty: bool = True,
+    min_count: int = 1,
+    min_length: int = 2,
+    lowercase: bool = True,
+    token_pattern: str = r"[a-zA-Z][a-zA-Z0-9_'-]*",
 ) -> dict[str, int]:
     """
     Load a vocabulary from a file.
@@ -166,11 +172,18 @@ def vocabulary_from_file(
     ``vocabulary_from_text`` for common file-loading patterns.
 
     Args:
-        path:     Path to the vocabulary file.
-        encoding: File encoding. Default: ``utf-8``.
-        format:   Either ``"wordlist"`` (one word per line) or ``"text"``
-                  (free-form text, tokenised and counted). Default: ``"wordlist"``.
-        **kwargs: Passed to the underlying function.
+        path:              Path to the vocabulary file.
+        encoding:          File encoding. Default: ``utf-8``.
+        fmt:               Either ``"wordlist"`` (one word per line) or
+                           ``"text"`` (free-form text, tokenised and counted).
+                           Default: ``"wordlist"``.
+        default_frequency: (wordlist only) Frequency assigned to each word.
+        strip:             (wordlist only) Strip whitespace from each word.
+        skip_empty:        (wordlist only) Skip empty strings after stripping.
+        min_count:         (text only) Minimum occurrence count to include.
+        min_length:        (text only) Minimum word length in characters.
+        lowercase:         (text only) Lowercase all tokens before counting.
+        token_pattern:     (text only) Regex pattern for tokenisation.
 
     Returns:
         ``{word: frequency}`` dict suitable for ``create_engine()``.
@@ -182,18 +195,29 @@ def vocabulary_from_file(
         engine = create_engine("production", vocabulary=vocab)
 
         # Free-form text corpus
-        vocab = vocabulary_from_file("corpus.txt", format="text", min_count=3)
+        vocab = vocabulary_from_file("corpus.txt", fmt="text", min_count=3)
         engine = create_engine("default", vocabulary=vocab)
     """
     path = Path(path)
     content = path.read_text(encoding=encoding)
 
-    if format == "wordlist":
-        return vocabulary_from_wordlist(content.splitlines(), **kwargs)  # type: ignore[arg-type]
-    elif format == "text":
-        return vocabulary_from_text(content, **kwargs)  # type: ignore[arg-type]
+    if fmt == "wordlist":
+        return vocabulary_from_wordlist(
+            content.splitlines(),
+            default_frequency=default_frequency,
+            strip=strip,
+            skip_empty=skip_empty,
+        )
+    elif fmt == "text":
+        return vocabulary_from_text(
+            content,
+            min_count=min_count,
+            min_length=min_length,
+            lowercase=lowercase,
+            token_pattern=token_pattern,
+        )
     else:
         raise ValueError(
-            f"Unknown format {format!r}. Use 'wordlist' (one word per line) "
+            f"Unknown fmt {fmt!r}. Use 'wordlist' (one word per line) "
             f"or 'text' (free-form text corpus)."
         )

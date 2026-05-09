@@ -1,4 +1,4 @@
-.PHONY: install demo test test-fast benchmark lint typecheck check all run
+.PHONY: install demo demo-docker warm test test-fast test-perf benchmark benchmark-save benchmark-diff lint typecheck typecheck-examples version-check check all run
 
 # ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -22,21 +22,54 @@ run:
 
 # ── Demo ─────────────────────────────────────────────────────────────────────
 
+# Run the interactive browser demo (requires Python + installed deps).
 demo: install
-	poetry run python scripts/demo.py
+	poetry run aac demo
+
+# Run the demo via Docker - no Python or pip required locally.
+# Opens at http://localhost:5000
+demo-docker:
+	docker compose up --build
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 test:
 	poetry run pytest
 
+# Fast subset: skip slow integration tests (property-based, persistence).
 test-fast:
 	poetry run pytest -m "not integration"
 
-# ── Benchmark ────────────────────────────────────────────────────────────────
+# Performance regression gate: enforces concrete latency upper bounds.
+# Runs automatically in CI (ubuntu-latest, Python 3.12 only).
+# Run locally before a PR to check you haven't introduced a regression.
+test-perf:
+	poetry run pytest tests/test_performance_regression.py -v
 
+# Pre-build all preset engine indexes (SymSpell, trigram). Run once after install
+# to avoid the first-call latency spike in compare_presets() and the demo.
+# Takes ~8 seconds. After this, compare_presets() and aac compare are instant.
+warm:
+	poetry run python -c "from aac.presets import warm_cache; print('Building engines...'); warm_cache(); print('Done.')"
+
+
+
+# Print p50/p95/p99 latency per preset. Informational; no assertions.
+# For latency gates with assertions, use: make test-perf
 benchmark:
 	poetry run python -m aac.benchmarks.benchmark_engine
+
+# Save current benchmark results as the performance baseline.
+# Run this after a deliberate performance change to update the reference point.
+# The baseline file (.benchmark_baseline.json) should be committed to the repo.
+benchmark-save:
+	poetry run python -m aac.benchmarks.benchmark_engine --save
+
+# Compare current performance against the saved baseline.
+# Exits with code 1 if any preset is >20% slower than the baseline p99.
+# Run this before a PR to catch accidental regressions.
+benchmark-diff:
+	poetry run python -m aac.benchmarks.benchmark_engine --diff
 
 # ── Code quality ─────────────────────────────────────────────────────────────
 
@@ -45,6 +78,17 @@ lint:
 
 typecheck:
 	poetry run mypy src
+
+# Type-check examples separately (excluded from main mypy run to keep CI fast,
+# but should be checked periodically - type errors in examples are silent bugs
+# that mislead users copying the code). Run before a release.
+typecheck-examples:
+	poetry run mypy examples --ignore-missing-imports
+
+# Verify that src/aac/__init__.py __version__ matches pyproject.toml version.
+# Both must be updated together on a release; this catches the drift.
+version-check:
+	python scripts/check_version.py
 
 check: lint typecheck test
 

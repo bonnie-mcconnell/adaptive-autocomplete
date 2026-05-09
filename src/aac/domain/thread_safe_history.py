@@ -171,9 +171,33 @@ class ThreadSafeHistory(History):
             self._release_read()
 
     def snapshot(self) -> dict[str, dict[str, int]]:
+        """Deprecated. Thread-safe wrapper; use snapshot_counts() instead."""
+        import warnings
+        warnings.warn(
+            "ThreadSafeHistory.snapshot() is deprecated. "
+            "Use snapshot_counts() for inspection, or JsonHistoryStore.save() for persistence.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._acquire_read()
         try:
-            return super().snapshot()
+            return super().snapshot_counts()  # bypass super().snapshot() to avoid double-warn
+        finally:
+            self._release_read()
+
+    def snapshot_counts(self) -> dict[str, dict[str, int]]:
+        """Thread-safe snapshot_counts(). Returns a deep copy under a read lock."""
+        self._acquire_read()
+        try:
+            return super().snapshot_counts()
+        finally:
+            self._release_read()
+
+    def copy(self) -> History:
+        """Thread-safe copy(). Returns a new non-thread-safe History snapshot."""
+        self._acquire_read()
+        try:
+            return super().copy()
         finally:
             self._release_read()
 
@@ -207,8 +231,8 @@ class ThreadSafeHistory(History):
     # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
+        self._acquire_read()
         try:
-            self._acquire_read()
             n = len(self._entries)
         finally:
             self._release_read()
@@ -219,16 +243,28 @@ class ThreadSafeHistory(History):
         """
         The underlying coordination lock.
 
-        Acquire this directly only when you need a compound atomic
-        operation spanning multiple calls - for example, reading the
-        current count and conditionally recording a selection::
+        This is an advanced escape hatch for compound atomic operations.
+        In normal use you should never need it - ``record()`` and all read
+        methods are already individually thread-safe.
 
+        The only correct use case is a compound read-then-write that must
+        be atomic - for example, capping the number of recordings for a
+        prefix.  The pattern requires calling the *internal* (un-locked)
+        methods via ``super()``, because calling the public locked methods
+        while holding ``lock`` will deadlock::
+
+            # WRONG - deadlocks: counts_for_prefix() tries to acquire
+            # a read-lock while the write-lock is already held.
             with history.lock:
-                count = history.counts_for_prefix("he").get("hello", 0)
-                if count < 100:
-                    history.record("he", "hello")
+                count = history.counts_for_prefix("he")   # DEADLOCK
+
+            # CORRECT - use a subclass or internal access for the read,
+            # then call the public record() after releasing the lock.
+            # In practice this pattern is rarely needed; if you find
+            # yourself reaching for it, consider whether a higher-level
+            # lock in your application code is a cleaner solution.
 
         Warning: acquiring ``lock`` while holding a read-lock will deadlock.
-        Only use this for write-side compound operations.
+        Only use this for write-side compound operations via internal methods.
         """
         return self._lock

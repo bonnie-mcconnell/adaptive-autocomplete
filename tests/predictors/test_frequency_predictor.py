@@ -5,7 +5,7 @@ import math
 import pytest
 
 from aac.domain.types import CompletionContext
-from aac.predictors.frequency import FrequencyPredictor
+from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
 
 
 @pytest.fixture()
@@ -98,7 +98,7 @@ class TestFrequencyPredictorIndexCorrectness:
 
     def test_exact_match_not_in_index(self) -> None:
         """A word must not appear in results when the prefix equals the word exactly."""
-        from aac.predictors.frequency import FrequencyPredictor
+        from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
         vocab = {"hello": 100, "help": 80}
         predictor = FrequencyPredictor(vocab)
         results = [s.value for s in predictor.predict("hello")]
@@ -106,7 +106,7 @@ class TestFrequencyPredictorIndexCorrectness:
 
     def test_index_does_not_contain_exact_match_key(self) -> None:
         """The internal index must not store any word under its own full string."""
-        from aac.predictors.frequency import FrequencyPredictor
+        from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
         vocab = {"hi": 10, "hello": 100}
         predictor = FrequencyPredictor(vocab)
         assert "hi" not in predictor._index
@@ -117,11 +117,38 @@ class TestFrequencyPredictorValidation:
     """FrequencyPredictor must reject invalid construction arguments."""
 
     def test_max_results_less_than_one_raises(self) -> None:
-        from aac.predictors.frequency import FrequencyPredictor
+        from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
         with pytest.raises(ValueError, match="max_results"):
             FrequencyPredictor({"hello": 1}, max_results=0)
 
     def test_empty_frequencies_raises(self) -> None:
-        from aac.predictors.frequency import FrequencyPredictor
+        from aac.predictors.frequency import FrequencyPredictor, _DEFAULT_MAX_RESULTS
         with pytest.raises(ValueError, match="frequencies must not be empty"):
             FrequencyPredictor({})
+
+
+# ---------------------------------------------------------------------------
+# Default max_results guard (was 20, raised to 100)
+# ---------------------------------------------------------------------------
+
+class TestFrequencyPredictorDefault:
+    def test_default_max_results_is_100(self) -> None:
+        """max_results must be 100, not 20. With 20, words ranked 21-100 in
+        frequency were silently excluded - a correctness regression, not a
+        performance trade-off."""
+        assert _DEFAULT_MAX_RESULTS == 100, (
+            "Default max_results must be 100 to prevent silent truncation "
+            "of words that rank 21-100 in frequency for their prefix bucket"
+        )
+
+    def test_words_beyond_old_limit_20_are_returned(self) -> None:
+        """'hello' ranks 22nd in frequency among 'he' words.
+        With old default of 20 it was silently excluded."""
+        from aac.data import load_english_frequencies
+        freq = load_english_frequencies()
+        p = FrequencyPredictor(freq)  # default max_results=100
+        results = {s.suggestion.value for s in p.predict(CompletionContext("he"))}
+        assert "hello" in results, (
+            "'hello' ranks 22nd in frequency for prefix 'he'. "
+            "With max_results=100 it must be included."
+        )

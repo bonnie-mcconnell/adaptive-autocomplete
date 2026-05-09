@@ -42,9 +42,7 @@ from collections.abc import Iterable, Mapping
 from aac.domain.types import (
     CompletionContext,
     Predictor,
-    PredictorExplanation,
     ScoredSuggestion,
-    Suggestion,
     ensure_context,
 )
 from aac.predictors.symspell import SymSpellPredictor
@@ -86,6 +84,11 @@ class AdaptiveSymSpellPredictor(Predictor):
         predictor.predict("hello")   # uses distance=2 (5 chars >= 4)
     """
 
+    # The public name is "symspell" (not "adaptive_symspell") so that:
+    # 1. explain() base_components shows "symspell" consistently, regardless
+    #    of whether the engine uses SymSpellPredictor or AdaptiveSymSpellPredictor.
+    # 2. EngineConfig serialises the predictor name as "symspell", matching
+    #    the PredictorRegistry key used to reconstruct it.
     name = "symspell"
 
     def __init__(
@@ -128,23 +131,13 @@ class AdaptiveSymSpellPredictor(Predictor):
         if not prefix:
             return []
 
+        # Delegate to the appropriate inner index based on prefix length.
+        # SymSpellPredictor already excludes exact matches (word == prefix),
+        # so no additional filtering is needed here.  Do NOT re-add the prefix
+        # as a top-scoring exact match: completing a word to itself is noise,
+        # not a suggestion.  The old version of this method explicitly inserted
+        # the prefix at score=max(1.0, ...) which caused low-frequency words
+        # like "programing" (freq=0 in corpus) to appear as the top suggestion
+        # for their own query, burying high-frequency completions.
         inner = self._inner_tight if len(prefix) < self._short_prefix_len else self._inner_full
-        results = list(inner.predict(ctx))
-
-        if prefix in inner._delete_map:
-            exact_score = max((s.score for s in results), default=0.0)
-            results.append(
-                ScoredSuggestion(
-                    suggestion=Suggestion(value=prefix),
-                    score=max(1.0, exact_score + 1e-9),
-                    explanation=PredictorExplanation(
-                        value=prefix,
-                        score=max(1.0, exact_score + 1e-9),
-                        source=self.name,
-                        confidence=1.0,
-                    ),
-                )
-            )
-
-        results.sort(key=lambda s: s.score, reverse=True)
-        return results
+        return inner.predict(ctx)

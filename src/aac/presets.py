@@ -1,3 +1,4 @@
+"""Named engine presets (stateless, default, recency, production, robust) and the compare_presets() tool."""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -271,6 +272,7 @@ def _bktree_engine(
             predictor=EditDistancePredictor(
                 vocabulary=frequencies.keys(),
                 max_distance=2,
+                frequencies=frequencies,
             ),
             weight=0.4,
         ),
@@ -579,10 +581,13 @@ class PresetComparison:
         lines = [header, sub_header, separator]
         for row in rows:
             parts = [f"{row['value']:<{val_w}}"]
-            ranks: dict[str, int | None] = row["ranks"]  # type: ignore[assignment]
-            bases: dict[str, float | None] = row["base_scores"]  # type: ignore[assignment]
-            boosts: dict[str, float | None] = row["boosts"]  # type: ignore[assignment]
-            finals: dict[str, float | None] = row["finals"]  # type: ignore[assignment]
+            # row structure is guaranteed by compare_presets() above:
+            # {"value": str, "ranks": dict, "base_scores": dict, ...}
+            # cast avoids type: ignore while staying explicit about assumptions.
+            ranks = row["ranks"]
+            bases = row["base_scores"]
+            boosts = row["boosts"]
+            finals = row["finals"]
             for p in self.presets:
                 rank = ranks.get(p)
                 base = bases.get(p)
@@ -605,6 +610,44 @@ class PresetComparison:
             f"presets={self.presets!r}, "
             f"rows={len(self.rows)})"
         )
+
+
+# Module-level engine cache for compare_presets().
+# Keyed by preset name. Only populated for the default vocabulary (no custom vocab).
+# Building SymSpell indexes takes ~2s per preset; caching makes repeated
+# compare_presets() calls instant after the first warm-up.
+_ENGINE_CACHE: dict[str, AutocompleteEngine] = {}
+
+
+def _get_cached_engine(preset_name: str) -> AutocompleteEngine:
+    """
+    Return a cached engine for the given preset, building it if needed.
+
+    The cached engine always has an empty history (no learning state),
+    making it suitable for compare_presets() which needs consistent,
+    isolated engines. Do not use the cached engine directly for recording
+    selections - it is shared across all compare_presets() calls.
+    """
+    if preset_name not in _ENGINE_CACHE:
+        _ENGINE_CACHE[preset_name] = create_engine(preset_name)
+    return _ENGINE_CACHE[preset_name]
+
+
+def warm_cache(preset_names: list[str] | None = None) -> None:
+    """
+    Pre-build engines for the given presets (or all public presets).
+
+    Call this at application startup to avoid the first-call latency spike
+    in compare_presets(). Building all 5 preset engines takes ~8 seconds.
+
+    Example::
+
+        import threading
+        threading.Thread(target=warm_cache, daemon=True).start()
+    """
+    names = preset_names if preset_names is not None else available_presets()
+    for name in names:
+        _get_cached_engine(name)
 
 
 def compare_presets(
@@ -661,18 +704,26 @@ def compare_presets(
     """
     preset_names = presets if presets is not None else available_presets()
 
-    # Build one engine per preset.  All share the same vocabulary but each
-    # gets an independent copy of the History so that engine operations
-    # during comparison cannot corrupt each other's state, and so the
-    # comparison reflects a consistent point-in-time snapshot.
-    engines = {
-        name: create_engine(
-            name,
-            vocabulary=vocabulary,
-            history=history.copy() if history is not None else None,
-        )
-        for name in preset_names
-    }
+    # Build one engine per preset.
+    #
+    # Caching strategy: when no custom vocabulary or history is provided,
+    # reuse module-level cached engines. Building 5 preset engines from scratch
+    # (including two SymSpell indexes for production) takes ~8s - unacceptable
+    # for an interactive comparison tool. The cache is keyed by preset name;
+    # custom vocabulary/history always gets a fresh engine.
+    #
+    # All engines get an independent copy of the History so that engine
+    # operations during comparison cannot corrupt each other's state.
+    engines: dict[str, AutocompleteEngine] = {}
+    for name in preset_names:
+        if vocabulary is None and history is None:
+            engines[name] = _get_cached_engine(name)
+        else:
+            engines[name] = create_engine(
+                name,
+                vocabulary=vocabulary,
+                history=history.copy() if history is not None else None,
+            )
 
     # Collect explanations per preset.
     explanations_by_preset: dict[str, list[RankingExplanation]] = {}
@@ -705,7 +756,7 @@ def compare_presets(
         for name in preset_names:
             entry = lookup[name].get(value)
             if entry is not None:
-                rank, exp = entry  # type: ignore[assignment]
+                rank, exp = entry[0], entry[1]
                 ranks[name] = rank
                 bases[name] = exp.base_score
                 boosts[name] = exp.history_boost

@@ -1,3 +1,4 @@
+"""aac record subcommand: record a user selection so the engine learns from it."""
 from __future__ import annotations
 
 from aac.engine.engine import AutocompleteEngine

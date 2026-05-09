@@ -1,3 +1,4 @@
+"""HistoryPredictor: scores previously-selected values by selection frequency for the current prefix."""
 from __future__ import annotations
 
 import math

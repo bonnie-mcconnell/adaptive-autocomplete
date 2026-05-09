@@ -56,3 +56,22 @@ def test_engine_describe_shape() -> None:
 
     assert isinstance(info["predictors"], list)
     assert isinstance(info["rankers"], list)
+
+
+def test_engine_describe_history_entries_accurate() -> None:
+    """describe()['history_entries'] must reflect the true count of recorded selections.
+
+    This test also validates the O(1) implementation: len(self._history._entries)
+    gives the same result as the O(n) len(self._history.entries()) but without
+    creating a full tuple copy on every call.
+    """
+    engine = get_preset("stateless").build(None, _SMALL_VOCAB)
+
+    assert engine.describe()["history_entries"] == 0
+
+    engine.record_selection("pr", "program")
+    assert engine.describe()["history_entries"] == 1
+
+    engine.record_selection("pr", "programming")
+    engine.record_selection("hel", "hello")
+    assert engine.describe()["history_entries"] == 3

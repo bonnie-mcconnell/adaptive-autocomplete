@@ -1,5 +1,5 @@
 """
-Engine configuration serialisation.
+Engine configuration serialisation with predictor registry.
 
 Problem
 -------
@@ -14,7 +14,12 @@ Solution
 --------
 ``EngineConfig`` is a JSON-serialisable representation of an engine's full
 configuration.  ``engine.to_config()`` serialises a running engine.
-``AutocompleteEngine.from_config(config)`` reconstructs it.
+``EngineConfig.from_json(...).build()`` reconstructs it.
+
+For preset engines, ``build()`` delegates to ``create_engine()`` - fast and
+exact.  For custom engines, ``build()`` uses the ``PredictorRegistry`` to
+resolve predictor classes by name.  Third-party predictors can be registered
+via ``PredictorRegistry.register()``.
 
 What is serialised
 ------------------
@@ -38,27 +43,213 @@ Usage
 
     engine = create_engine("production")
     config = engine.to_config()
-    print(config.to_json())
 
     # Reconstruct on another server
     engine2 = EngineConfig.from_json(config.to_json()).build()
     assert engine2.suggest("prog") == engine.suggest("prog")
 
-    # Save alongside vocabulary
-    import json
-    with open("engine_config.json", "w") as f:
-        f.write(config.to_json())
+    # Custom engine reconstruction via registry
+    from aac.engine.config import PredictorRegistry
 
-    with open("engine_config.json") as f:
-        engine3 = EngineConfig.from_json(f.read()).build()
+    class MyPredictor:
+        name = "my_predictor"
+        def predict(self, ctx): ...
+
+    PredictorRegistry.register("my_predictor", lambda vocab, params: MyPredictor())
 """
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from aac.domain.history import History
+    from aac.domain.types import Predictor, WeightedPredictor
+    from aac.engine.engine import AutocompleteEngine
+    from aac.ranking.base import Ranker
 
 _SCHEMA_VERSION = 1
+
+
+# ---------------------------------------------------------------------------
+# Predictor registry
+# ---------------------------------------------------------------------------
+
+# Factory signature: (vocabulary, params) -> Predictor instance.
+# params is a plain dict so factories can accept arbitrary keyword config
+# without changing the registry interface. History-aware factories check
+# params.get("_history") - a private key injected by build_predictor().
+_PredictorFactory = Callable[[Mapping[str, int] | None, dict[str, Any]], "Predictor"]
+
+
+class PredictorRegistry:
+    """
+    Registry mapping predictor names to factory callables.
+
+    Allows ``EngineConfig.build()`` to reconstruct custom engines from
+    config without hardcoding all predictor classes.
+
+    Built-in predictors (frequency, history, symspell, trigram, bktree,
+    trie, static_prefix) are registered automatically at import time.
+    Third-party or user-defined predictors must be registered before
+    calling ``build()``.
+
+    Example::
+
+        from aac.engine.config import PredictorRegistry
+
+        class MyDomainPredictor:
+            name = "domain"
+            def predict(self, ctx): ...
+
+        PredictorRegistry.register(
+            "domain",
+            lambda vocab, params: MyDomainPredictor()
+        )
+    """
+
+    _registry: dict[str, _PredictorFactory] = {}
+
+    @classmethod
+    def register(cls, name: str, factory: _PredictorFactory) -> None:
+        """
+        Register a factory for a predictor name.
+
+        Parameters:
+            name:    The predictor's ``name`` attribute (used as the config key).
+            factory: Callable ``(vocabulary, params) -> Predictor``.
+                     ``vocabulary`` is the dict passed to ``build()``, or None.
+                     ``params`` is the ``params`` dict from ``PredictorConfig``.
+        """
+        cls._registry[name] = factory
+
+    @classmethod
+    def build_predictor(
+        cls,
+        name: str,
+        vocabulary: Mapping[str, int] | None,
+        params: dict[str, Any],
+        history: History | None = None,
+    ) -> Predictor:
+        """
+        Build a predictor instance by name.
+
+        Raises:
+            KeyError: If the name is not registered.
+        """
+        if name not in cls._registry:
+            registered = sorted(cls._registry.keys())
+            raise KeyError(
+                f"No predictor registered for name {name!r}. "
+                f"Registered predictors: {registered}. "
+                f"Use PredictorRegistry.register() to add custom predictors."
+            )
+        factory = cls._registry[name]
+        # History-aware predictors receive history via params using a
+        # private key.  The factory signature is (vocabulary, params);
+        # factories that need history should check params.get('_history').
+        if history is not None:
+            params = {**params, "_history": history}
+        return factory(vocabulary, params)
+
+    @classmethod
+    def registered_names(cls) -> list[str]:
+        """Return sorted list of all registered predictor names."""
+        return sorted(cls._registry.keys())
+
+
+def _register_builtins() -> None:
+    """Register all built-in predictors.  Called once at module import."""
+    from aac.domain.history import History
+    from aac.predictors.edit_distance import EditDistancePredictor
+    from aac.predictors.frequency import FrequencyPredictor
+    from aac.predictors.history import HistoryPredictor
+    from aac.predictors.static_prefix import StaticPrefixPredictor
+    from aac.predictors.symspell import SymSpellPredictor
+    from aac.predictors.trie import TriePrefixPredictor
+    from aac.predictors.trigram import TrigramPredictor
+    from aac.domain.types import Predictor
+
+    def _freq(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
+        from aac.data import load_english_frequencies
+        frequencies = vocab or load_english_frequencies()
+        return FrequencyPredictor(
+            frequencies,
+            max_results=params.get("max_results", 100),
+        )
+
+    def _history_pred(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
+        raw_history = params.get("_history")
+        history = raw_history if isinstance(raw_history, History) else History()
+        return HistoryPredictor(history)
+
+    def _symspell(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
+        from aac.data import load_english_frequencies
+        frequencies = vocab or load_english_frequencies()
+        return SymSpellPredictor(
+            list(frequencies.keys()),
+            max_distance=params.get("max_distance", 2),
+            frequencies=frequencies,
+        )
+
+    def _trigram(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
+        from aac.data import load_english_frequencies
+        frequencies = vocab or load_english_frequencies()
+        return TrigramPredictor(
+            list(frequencies.keys()),
+            max_distance=params.get("max_distance", 2),
+            frequencies=frequencies,
+        )
+
+    def _bktree(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
+        from aac.data import load_english_frequencies
+        frequencies = vocab or load_english_frequencies()
+        return EditDistancePredictor(
+            list(frequencies.keys()),
+            max_distance=params.get("max_distance", 2),
+            frequencies=frequencies,
+        )
+
+    def _trie(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
+        from aac.data import load_english_frequencies
+        frequencies = vocab or load_english_frequencies()
+        return TriePrefixPredictor(list(frequencies.keys()))
+
+    def _static(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
+        from aac.data import load_english_frequencies
+        frequencies = vocab or load_english_frequencies()
+        return StaticPrefixPredictor(list(frequencies.keys()))
+
+    def _adaptive_symspell(vocab: Mapping[str, int] | None, params: dict[str, Any]) -> Predictor:
+        from aac.data import load_english_frequencies
+        from aac.predictors.adaptive_symspell import AdaptiveSymSpellPredictor
+        frequencies = vocab or load_english_frequencies()
+        return AdaptiveSymSpellPredictor(
+            list(frequencies.keys()),
+            max_distance=params.get("max_distance", 2),
+            frequencies=frequencies,
+        )
+
+    PredictorRegistry.register("frequency", _freq)
+    PredictorRegistry.register("history", _history_pred)
+    PredictorRegistry.register("symspell", _symspell)
+    PredictorRegistry.register("adaptive_symspell", _adaptive_symspell)
+    PredictorRegistry.register("trigram", _trigram)
+    PredictorRegistry.register("bktree", _bktree)
+    PredictorRegistry.register("trie", _trie)
+    PredictorRegistry.register("static_prefix", _static)
+
+
+# Register builtins immediately so any import of this module gives
+# a usable registry without requiring an explicit initialisation call.
+_register_builtins()
+
+
+# ---------------------------------------------------------------------------
+# Config dataclasses
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -92,8 +283,7 @@ class EngineConfig:
         rankers:     Ranker names and parameters in order.
         version:     Schema version for forward compatibility.
         metadata:    Arbitrary caller-supplied key-value pairs (e.g.
-                     ``{"vocabulary_path": "...", "deployed_at": "..."}``)
-                     stored alongside the config for operational use.
+                     ``{"vocabulary_path": "...", "deployed_at": "..."}``).
 
     Example::
 
@@ -172,74 +362,117 @@ class EngineConfig:
     def build(
         self,
         vocabulary: dict[str, int] | None = None,
-        history: Any = None,
-    ) -> Any:
+        history: History | None = None,
+    ) -> AutocompleteEngine:
         """
         Reconstruct an ``AutocompleteEngine`` from this config.
 
-        If ``preset`` is set, delegates to ``create_engine()`` - this is
-        the fast path and produces identical behaviour to the original engine,
-        provided the same vocabulary is supplied.
+        For **preset engines** (``preset`` is set), delegates to
+        ``create_engine()`` - this is the fast path and produces identical
+        behaviour to the original engine.
 
-        If ``preset`` is None (custom engine), raises ``NotImplementedError``
-        - custom engine reconstruction requires caller-supplied predictor
-        and ranker instances that cannot be inferred from names alone.
+        For **custom engines** (``preset`` is None), uses the
+        ``PredictorRegistry`` to resolve predictor classes by name and
+        rebuilds the engine from its structural config.  All built-in
+        predictors are registered automatically; custom predictors must be
+        registered via ``PredictorRegistry.register()`` before calling
+        ``build()``.
 
         Parameters:
             vocabulary: Custom vocabulary mapping word → frequency count.
                         If None and ``metadata`` contains a ``"vocabulary_path"``
-                        key, a warning is printed reminding the caller to load
-                        and pass the vocabulary.  If None and no metadata hint
-                        exists, the bundled 48k English corpus is used (same
-                        as ``create_engine()`` default) - this is correct for
-                        engines that were originally built with the default
-                        vocabulary, but silently wrong for engines built with
-                        a custom vocabulary.
-
-                        Best practice: always store the vocabulary path in
-                        ``metadata`` when calling ``to_config()``::
-
-                            config = engine.to_config(
-                                preset="production",
-                                metadata={"vocabulary_path": str(vocab_path)},
-                            )
-
-                        And restore it explicitly::
-
-                            import json
-                            config = EngineConfig.from_json(config_text)
-                            vocab = json.load(open(config.metadata["vocabulary_path"]))
-                            engine = config.build(vocabulary=vocab)
-
+                        key, a warning is emitted.  If None with no metadata
+                        hint, the bundled 48k English corpus is used.
             history:    Pre-loaded ``History`` instance.  If None, starts
                         with an empty in-memory history.
 
         Returns:
             A fully initialised ``AutocompleteEngine``.
+
+        Example::
+
+            config = engine.to_config(
+                metadata={"vocabulary_path": str(vocab_path)},
+            )
+            # ... round-trip via JSON ...
+            import json
+            vocab = json.load(open(config.metadata["vocabulary_path"]))
+            engine2 = config.build(vocabulary=vocab)
         """
         import warnings
 
         from aac.presets import create_engine
 
+        if vocabulary is None and "vocabulary_path" in self.metadata:
+            warnings.warn(
+                f"EngineConfig.build() was called without a vocabulary, but "
+                f"metadata contains 'vocabulary_path': "
+                f"{self.metadata['vocabulary_path']!r}. "
+                f"The engine will use the bundled English corpus instead of "
+                f"the original vocabulary. Pass vocabulary= explicitly to "
+                f"restore exact behaviour.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         if self.preset is not None:
-            if vocabulary is None and "vocabulary_path" in self.metadata:
-                warnings.warn(
-                    f"EngineConfig.build() was called without a vocabulary, but "
-                    f"metadata contains 'vocabulary_path': "
-                    f"{self.metadata['vocabulary_path']!r}. "
-                    f"The engine will use the bundled English corpus instead of "
-                    f"the original vocabulary. Pass vocabulary= explicitly if "
-                    f"this engine was built with a custom vocabulary.",
-                    UserWarning,
-                    stacklevel=2,
-                )
             return create_engine(self.preset, vocabulary=vocabulary, history=history)
 
-        raise NotImplementedError(
-            "Reconstructing a custom engine (preset=None) from config requires "
-            "caller-supplied predictor and ranker instances. "
-            "Create the engine directly via AutocompleteEngine() or use a named "
-            "preset so that build() can delegate to create_engine()."
+        # Custom engine path: use the registry to reconstruct predictors.
+        from aac.domain.history import History
+        from aac.domain.types import WeightedPredictor
+        from aac.engine.engine import AutocompleteEngine
+        from aac.ranking.base import Ranker
+        from aac.ranking.decay import DecayFunction, DecayRanker
+        from aac.ranking.learning import LearningRanker
+        from aac.ranking.score import ScoreRanker
+
+        resolved_history: History = history or History()
+
+        predictors: list[WeightedPredictor] = []
+        for pc in self.predictors:
+            predictor = PredictorRegistry.build_predictor(
+                pc.name,
+                vocabulary,
+                pc.params,
+                history=resolved_history,
+            )
+            predictors.append(WeightedPredictor(predictor=predictor, weight=pc.weight))
+
+        rankers: list[Ranker] = []
+        for rc in self.rankers:
+            if rc.name in ("score", "scoreranker"):
+                rankers.append(ScoreRanker())
+            elif rc.name in ("decay", "decayranker"):
+                half_life = rc.params.get("half_life_seconds", 3600.0)
+                weight = rc.params.get("weight", 1.0)
+                rankers.append(
+                    DecayRanker(
+                        resolved_history,
+                        DecayFunction(half_life_seconds=half_life),
+                        weight=weight,
+                    )
+                )
+            elif rc.name in ("learning", "learningranker"):
+                boost = rc.params.get("boost", 1.0)
+                dominance_ratio = rc.params.get("dominance_ratio", 1.0)
+                rankers.append(
+                    LearningRanker(
+                        resolved_history,
+                        boost=boost,
+                        dominance_ratio=dominance_ratio,
+                    )
+                )
+            else:
+                raise ValueError(
+                    f"Unknown ranker {rc.name!r}. "
+                    f"Known rankers: score, decay, learning."
+                )
+
+        return AutocompleteEngine(
+            predictors=predictors,
+            ranker=rankers or None,
+            history=resolved_history,
         )
 
     def diff(self, other: EngineConfig) -> list[str]:
@@ -269,23 +502,30 @@ class EngineConfig:
             a = self_preds.get(name)
             b = other_preds.get(name)
             if a is None:
-                diffs.append(f"predictor added: {name!r} (weight={b.weight})")  # type: ignore[union-attr]
+                # b cannot be None here: the loop iterates set(self_preds) | set(other_preds),
+                # so every name is in at least one dict.  If a is None, b must be present.
+                # This is a programming error (violated loop invariant), not user input,
+                # so a RuntimeError is appropriate - but we avoid bare assert which is
+                # stripped by -O and provides no message.
+                if b is None:
+                    raise RuntimeError(
+                        f"diff() invariant violated: predictor {name!r} missing from both configs"
+                    )
+                diffs.append(f"predictor added: {name!r} (weight={b.weight})")
             elif b is None:
                 diffs.append(f"predictor removed: {name!r} (was weight={a.weight})")
             elif abs(a.weight - b.weight) > 1e-9:
-                diffs.append(
-                    f"predictor {name!r} weight: {a.weight} → {b.weight}"
-                )
+                diffs.append(f"predictor {name!r} weight: {a.weight} → {b.weight}")
 
         self_rankers: list[str] = [r.name for r in self.rankers]
         other_rankers: list[str] = [r.name for r in other.rankers]
         if self_rankers != other_rankers:
             diffs.append(f"rankers: {self_rankers} → {other_rankers}")
         else:
-            for a, b in zip(self.rankers, other.rankers, strict=False):  # type: ignore[assignment]
-                if a.params != b.params:  # type: ignore[union-attr]
+            for a_r, b_r in zip(self.rankers, other.rankers, strict=False):
+                if a_r.params != b_r.params:
                     diffs.append(
-                        f"ranker {a.name!r} params: {a.params} → {b.params}"  # type: ignore[union-attr]
+                        f"ranker {a_r.name!r} params: {a_r.params} → {b_r.params}"
                     )
 
         return diffs

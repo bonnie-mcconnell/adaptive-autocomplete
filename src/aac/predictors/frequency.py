@@ -1,3 +1,4 @@
+"""FrequencyPredictor: scores candidates by log-normalised word frequency from a frequency table."""
 from __future__ import annotations
 
 import math

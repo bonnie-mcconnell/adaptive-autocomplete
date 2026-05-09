@@ -134,19 +134,23 @@ def test_count_totals_across_prefixes() -> None:
 # ------------------------------------------------------------------
 
 def test_snapshot_format() -> None:
+    import pytest
     h = History()
     h.record("he", "hello", timestamp=_NOW)
     h.record("he", "hello", timestamp=_NOW)
     h.record("wo", "world", timestamp=_NOW)
-    snap = h.snapshot()
+    with pytest.warns(DeprecationWarning, match="snapshot_counts"):
+        snap = h.snapshot()
     assert snap["he"]["hello"] == 2
     assert snap["wo"]["world"] == 1
 
 
 def test_snapshot_does_not_include_timestamps() -> None:
+    import pytest
     h = History()
     h.record("he", "hello", timestamp=_NOW)
-    snap = h.snapshot()
+    with pytest.warns(DeprecationWarning):
+        snap = h.snapshot()
     assert isinstance(snap["he"]["hello"], int)
 
 
@@ -231,3 +235,77 @@ def test_prefix_index_consistent_after_many_records() -> None:
         indexed = list(h.entries_for_prefix(p))
         brute = [e for e in h.entries() if e.prefix == p]
         assert indexed == brute, f"Index mismatch for prefix {p!r}"
+
+
+# ---------------------------------------------------------------------------
+# History.copy()
+# ---------------------------------------------------------------------------
+
+class TestHistoryCopy:
+    def test_copy_is_independent(self) -> None:
+        h = History()
+        h.record("he", "hello")
+        h2 = h.copy()
+
+        h2.record("he", "help")  # modify copy
+        assert len(list(h.entries())) == 1, "original must be unaffected"
+        assert len(list(h2.entries())) == 2, "copy should have both entries"
+
+    def test_copy_has_same_entries(self) -> None:
+        h = History()
+        h.record("prog", "programming")
+        h.record("prog", "program")
+        h2 = h.copy()
+        assert set(e.value for e in h2.entries()) == {"programming", "program"}
+
+    def test_copy_prefix_index_works(self) -> None:
+        h = History()
+        h.record("prog", "programming")
+        h2 = h.copy()
+        assert h2.counts_for_prefix("prog").get("programming") == 1
+
+    def test_copy_of_empty_history_is_empty(self) -> None:
+        h2 = History().copy()
+        assert len(list(h2.entries())) == 0
+
+    def test_original_unaffected_by_copy_mutations(self) -> None:
+        h = History()
+        h.record("he", "her")
+        h2 = h.copy()
+        for _ in range(5):
+            h2.record("he", "help")
+
+        assert h.counts_for_prefix("he").get("help", 0) == 0, (
+            "Recording into the copy must not affect the original's counts"
+        )
+
+
+# ---------------------------------------------------------------------------
+# History.__repr__
+# ---------------------------------------------------------------------------
+
+class TestHistoryRepr:
+    def test_empty_history_repr(self) -> None:
+        h = History()
+        assert repr(h) == "History(entries=0, prefixes=0)"
+
+    def test_repr_reflects_entry_and_prefix_counts(self) -> None:
+        h = History()
+        h.record("prog", "programming", timestamp=_NOW)
+        h.record("prog", "program", timestamp=_NOW)
+        h.record("hel", "hello", timestamp=_NOW)
+        assert repr(h) == "History(entries=3, prefixes=2)"
+
+    def test_repr_same_prefix_multiple_records(self) -> None:
+        h = History()
+        for _ in range(5):
+            h.record("he", "hello", timestamp=_NOW)
+        # 5 entries, 1 distinct prefix
+        assert repr(h) == "History(entries=5, prefixes=1)"
+
+    def test_repr_does_not_mutate(self) -> None:
+        """Calling repr() must not change the history state."""
+        h = History()
+        h.record("a", "apple", timestamp=_NOW)
+        _ = repr(h)
+        assert len(h.entries()) == 1

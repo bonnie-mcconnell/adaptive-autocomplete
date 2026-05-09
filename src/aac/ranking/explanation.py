@@ -1,3 +1,4 @@
+"""RankingExplanation dataclass with enforced invariant: final_score == base_score + history_boost."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -77,31 +78,51 @@ class RankingExplanation:
         invariant check in ``__post_init__`` (``base + boost``) and avoids
         floating-point rounding errors where a four-way sum evaluates
         differently from a two-way sum of the same values.
+
+        ``contribution_pct`` is recomputed from the merged component maps so
+        callers always see a consistent, non-empty breakdown.  Dropping it
+        (returning ``{}``) would silently discard usable diagnostic data.
         """
         if self.value != other.value:
             raise ValueError("Cannot merge explanations for different values")
 
-        # NOTE:
-        # 'source' intentionally preserved from the first explanation.
+        # NOTE: 'source' intentionally preserved from the first explanation.
         # Component maps capture multi-ranker contributions.
 
         merged_base = self.base_score + other.base_score
         merged_boost = self.history_boost + other.history_boost
+        merged_final = merged_base + merged_boost
+
+        merged_base_components: dict[str, float] = {
+            **self.base_components,
+            **other.base_components,
+        }
+        merged_history_components: dict[str, float] = {
+            **self.history_components,
+            **other.history_components,
+        }
+
+        # Recompute contribution_pct from merged components.
+        # Use the same threshold and rounding as engine.explain().
+        all_components = {**merged_base_components, **merged_history_components}
+        if abs(merged_final) > 1e-12:
+            contribution_pct: dict[str, float] = {
+                k: round(v / merged_final, 4)
+                for k, v in all_components.items()
+                if abs(v) > 1e-12
+            }
+        else:
+            contribution_pct = {}
 
         return RankingExplanation(
             value=self.value,
             base_score=merged_base,
             history_boost=merged_boost,
-            final_score=merged_base + merged_boost,
+            final_score=merged_final,
             source=self.source,
-            base_components={
-                **self.base_components,
-                **other.base_components,
-            },
-            history_components={
-                **self.history_components,
-                **other.history_components,
-            },
+            base_components=merged_base_components,
+            history_components=merged_history_components,
+            contribution_pct=contribution_pct,
         )
 
     @staticmethod

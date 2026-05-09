@@ -102,3 +102,59 @@ def test_repr_is_concise_and_contains_key_fields() -> None:
     assert "base_components" not in r
     assert "history_components" not in r
     assert "source" not in r
+
+
+def test_merge_preserves_contribution_pct() -> None:
+    """
+    merge() must recompute contribution_pct from merged components.
+    Previously it returned contribution_pct={} (silently dropping all
+    diagnostic data from both input explanations).
+    """
+    a = RankingExplanation(
+        value="hello",
+        base_score=1.0,
+        history_boost=0.0,
+        final_score=1.0,
+        source="frequency",
+        base_components={"frequency": 1.0},
+        history_components={},
+        contribution_pct={"frequency": 1.0},
+    )
+    b = RankingExplanation(
+        value="hello",
+        base_score=0.0,
+        history_boost=0.5,
+        final_score=0.5,
+        source="frequency",
+        base_components={},
+        history_components={"decay": 0.5},
+        contribution_pct={"decay": 1.0},
+    )
+
+    merged = a.merge(b)
+
+    assert merged.final_score == 1.5
+    assert "frequency" in merged.contribution_pct, (
+        "merge() dropped contribution_pct - frequency source missing"
+    )
+    assert "decay" in merged.contribution_pct, (
+        "merge() dropped contribution_pct - decay source missing"
+    )
+    # frequency = 1.0/1.5 ≈ 0.6667, decay = 0.5/1.5 ≈ 0.3333
+    assert abs(merged.contribution_pct["frequency"] - round(1.0 / 1.5, 4)) < 1e-4
+    assert abs(merged.contribution_pct["decay"] - round(0.5 / 1.5, 4)) < 1e-4
+
+
+def test_merge_zero_final_score_gives_empty_contribution_pct() -> None:
+    """merge() with zero final score must return {} not divide by zero."""
+    a = RankingExplanation(
+        value="hello", base_score=0.0, history_boost=0.0, final_score=0.0,
+        source="frequency", contribution_pct={},
+    )
+    b = RankingExplanation(
+        value="hello", base_score=0.0, history_boost=0.0, final_score=0.0,
+        source="frequency", contribution_pct={},
+    )
+    merged = a.merge(b)
+    assert merged.contribution_pct == {}
+    assert merged.final_score == 0.0

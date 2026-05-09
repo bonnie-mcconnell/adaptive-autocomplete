@@ -1,3 +1,4 @@
+"""Shared engine factory used by all CLI subcommands."""
 from __future__ import annotations
 
 from aac.domain.history import History

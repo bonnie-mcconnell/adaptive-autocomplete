@@ -161,6 +161,11 @@ def levenshtein(a: str, b: str) -> int:
 
     Cost model: insertion=1, deletion=1, substitution=1.
     """
+    # Identical strings - O(1) check saves full DP on exact cache hits
+    # and on BK-tree duplicate detection during index construction.
+    if a == b:
+        return 0
+
     if len(a) > len(b):
         a, b = b, a
 

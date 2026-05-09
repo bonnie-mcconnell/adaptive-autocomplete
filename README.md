@@ -1,8 +1,10 @@
 # adaptive-autocomplete
 
 [![CI](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions/workflows/ci.yml/badge.svg)](https://github.com/bonnie-mcconnell/adaptive-autocomplete/actions)
-[![PyPI](https://img.shields.io/pypi/v/adaptive-autocomplete)](https://pypi.org/project/adaptive-autocomplete/)
-[![Python](https://img.shields.io/pypi/pyversions/adaptive-autocomplete)](https://pypi.org/project/adaptive-autocomplete/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](pyproject.toml)
+[![mypy](https://img.shields.io/badge/mypy-strict-blue)](https://mypy-lang.org/)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 An autocomplete engine that learns from user selections, recovers typos, and can explain every ranking decision in plain numbers.
 
@@ -20,17 +22,25 @@ engine.suggest("programing")
 # → ['programming', ...]   # boosted by history
 
 engine.explain("programing")[0]
-# RankingExplanation(value='programming', base=1.84, boost=+1.50, final=3.34)
+# RankingExplanation(value='programming', base=1.65, boost=+1.50, final=3.15)
 
 engine.suggest_with_confidence("prog", limit=5)
-# [('programming', 1.0), ('program', 0.75), ('progress', 0.64), ...]
+# [('program', 1.0), ('programs', 0.89), ('progress', 0.85), ('programme', 0.79), ...]
 ```
 
 The differentiating feature is `explain()`. Every suggestion comes with a mathematically auditable score breakdown: which predictor contributed what, how much the ranker boosted it, and the relative contribution of each source as a percentage of the final score. `final_score == base_score + history_boost` is enforced as an object-level invariant - it cannot be violated.
 
 ---
 
-## Install
+## Why I built this
+
+I wanted to understand how autocomplete actually works - not at the "it uses machine learning" level, but at the "here is the exact function that decides why 'programming' ranks above 'program' for your specific query" level. Every library I found either abstracted away the ranking logic or required me to bring a pre-trained model. I wanted to build the ranking from first principles and be able to explain every number.
+
+The second reason was the explainability constraint. Most ranking systems are black boxes: you can see the output order but not why. I wanted a system where you could point at any suggestion and ask "why is this here?" and get a precise mathematical answer - not a narrative, a breakdown of numbers that add up correctly. The `RankingExplanation.__post_init__` invariant (`final_score == base_score + history_boost`) is the mechanism that enforces this: if you can't explain the score, you can't construct the object.
+
+The third reason was the zero-dependency constraint. I wanted to implement SymSpell, BK-trees, and trigram indexing from scratch rather than wrapping a library, because that's the only way to fully understand the trade-offs. `AdaptiveSymSpellPredictor` (two indexes dispatched by prefix length) came directly from debugging the single-index version and watching it return hundreds of low-quality candidates for 1-character prefixes.
+
+
 
 ```bash
 pip install adaptive-autocomplete
@@ -55,12 +65,21 @@ Opens a local browser UI showing live suggestions with confidence bars, per-sugg
 **CLI:**
 
 ```bash
-aac suggest prog                    # ranked by frequency + learning
-aac suggest programing              # typo recovery → programming
-aac explain prog                    # score breakdown per suggestion
-aac record prog programming         # record a selection; engine learns
-aac history prog                    # what the engine has learned
-aac demo                            # interactive browser UI
+aac suggest prog                              # ranked by frequency + learning
+aac suggest programing                        # typo recovery → programming
+aac suggest prog --preset stateless           # no learning, frequency only
+aac suggest prog --confidence                 # show confidence bars
+aac suggest prog --json                       # pipe-friendly JSON output
+aac explain prog                              # score breakdown per suggestion
+aac explain prog --json                       # full per-predictor JSON breakdown
+aac compare recieve                           # side-by-side across all presets
+aac compare recieve --presets stateless production  # specific presets
+aac batch prog hel wor                        # batch suggestions (JSON)
+aac batch prog hel wor --limit 5             # limit per prefix
+aac record prog programming                   # record a selection; engine learns
+aac history prog                              # what the engine has learned
+aac presets                                   # list all presets
+aac demo                                      # interactive browser UI
 ```
 
 History persists automatically to `~/.aac_history.json`.
@@ -89,9 +108,9 @@ The `production` preset uses a hybrid strategy covering all prefix lengths:
 - Both run at all lengths and combine additively.
 
 ```
-aac suggest programing   → programming          (distance 2)
-aac suggest recieve      → receive, relieve     (transposition + substitution)
-aac suggest helo         → help, hello, hell
+aac suggest programing   → programming          (distance 2 - missing 'm')
+aac suggest recieve      → recieved, relieve, believe, receive
+aac suggest helo         → help, held, hell, hello
 aac suggest he           → her, hey, here, help (clean, not hundreds of noise)
 ```
 
@@ -113,8 +132,8 @@ aac suggest he      → hello now leads
 ```
 $ aac record he hello && aac record he hello && aac explain he
 
-hello          score=     1.87 (100.0%)  base=     0.62  boost=+1.25
-her            score=     0.75 ( 40.1%)  base=     0.75  boost=+0.00
+hello          score=     4.67 (100.0%)  base=     1.67  boost=+3.00
+her            score=     0.99 ( 21.2%)  base=     0.99  boost=+0.00
 ```
 
 Every breakdown shows `base_score` (sum of predictor contributions), `history_boost` (ranker adjustment), `final_score`, and `contribution_pct` (each source as a fraction of final). The invariant `final_score == base_score + history_boost` is enforced in `RankingExplanation.__post_init__` - there is no code path that can violate it.
@@ -123,10 +142,10 @@ Every breakdown shows `base_score` (sum of predictor contributions), `history_bo
 
 ```python
 engine.explain("he")[0]
-# RankingExplanation(value='hello', base=1.67, boost=+1.50, final=3.17)
+# RankingExplanation(value='hello', base=1.67, boost=+3.00, final=4.67)
 # base_components:    {'frequency': 0.47, 'history': 1.20, 'symspell': 0.0, 'trigram': 0.0}
-# history_components: {'decay': 1.50}
-# contribution_pct:   {'frequency': 0.15, 'history': 0.38, 'decay': 0.47}
+# history_components: {'decay': 3.00}
+# contribution_pct:   {'frequency': 0.10, 'history': 0.26, 'decay': 0.64}
 ```
 
 The `contribution_pct` field makes weight-tuning direct: "decay is contributing 47% of the final score - do I want learning to dominate this much?"
@@ -134,12 +153,16 @@ The `contribution_pct` field makes weight-tuning direct: "decay is contributing 
 ### Confidence scores
 
 ```python
+# After recording 3 selections of 'programming':
+for _ in range(3):
+    engine.record_selection("prog", "programming")
+
 for word, conf in engine.suggest_with_confidence("prog", limit=5):
     label = "★" if conf > 0.8 else " "
     print(f"{label} {word:<20} {conf:.0%}")
 # ★ programming          100%
-#   program               75%
-#   progress              64%
+#   program               71%
+#   programs              56%
 ```
 
 ### Selection counts
@@ -180,26 +203,38 @@ for domain, hist in ctx.domains():
 
 ### Preset comparison
 
-`compare_presets()` runs `explain()` across multiple engines simultaneously and returns side-by-side score breakdowns. Each engine gets an independent copy of the History so comparison is always consistent.
+`compare_presets()` runs `explain()` across multiple engines simultaneously and returns side-by-side score breakdowns. Each engine gets an independent History copy so comparison is always consistent. Engines are cached after first build so repeated calls are instant.
 
 ```python
-from aac.presets import compare_presets
+from aac.presets import compare_presets, warm_cache
 
-cmp = compare_presets("recieve", ["stateless", "production"])
+# Optional: pre-build all engines at startup (takes ~8s, then cached)
+warm_cache()
+
+cmp = compare_presets("recieve")                                   # all presets
+cmp = compare_presets("recieve", presets=["stateless", "production"])  # specific
 print(cmp.to_table())
+```
+
+Or from the CLI:
+
+```bash
+aac compare recieve
+aac compare recieve --presets stateless production
+aac compare recieve --json | jq '.rows[0]'
 ```
 
 ```
 suggestion         stateless                    production
                 rank    base   boost   final   rank    base   boost   final
 ---------------------------------------------------------------------------
-recieved          #1   0.147  +0.000   0.147    #2   0.526  +0.000   0.526
-recieve            -       -       -       -     #1   0.754  +0.000   0.754
-relieve            -       -       -       -     #3   0.179  +0.000   0.179
-receive            -       -       -       -     #5   0.122  +0.000   0.122
+recieved          #1   0.147  +0.000   0.147    #1   0.550  +0.000   0.550
+relieve            -       -       -       -     #2   0.202  +0.000   0.202
+believe            -       -       -       -     #3   0.152  +0.000   0.152
+receive            -       -       -       -     #4   0.146  +0.000   0.146
 ```
 
-`stateless` returns the misspelling as a corpus frequency hit. `production` surfaces the intended word. The table shows exactly why.
+`stateless` returns only the misspelling (`recieved` is in the corpus with a small count). `production` surfaces more candidates via SymSpell and trigram matching, making the ranking recoverable once you record a selection. The table shows exactly why: without typo-recovery predictors, `stateless` cannot surface `receive` at all.
 
 ### Serialisable engine config
 
@@ -297,23 +332,28 @@ predictor.add_word("MyNewSymbol", frequency=5_000)   # visible immediately
 
 ## vs alternatives
 
-| | adaptive-autocomplete | trie / prefix tree | BK-tree fuzzy |
-|---|---|---|---|
-| Typo recovery | ✓ hybrid SymSpell + trigram | ✗ | ✓ slow at scale |
-| Learns from use | ✓ history + decay | ✗ | ✗ |
-| Explains rankings | ✓ `explain()` | ✗ | ✗ |
-| Contribution % | ✓ `contribution_pct` | ✗ | ✗ |
-| Contextual learning | ✓ `ContextualHistory` | ✗ | ✗ |
-| Serialisable config | ✓ `EngineConfig` | ✗ | ✗ |
-| Compare strategies | ✓ `compare_presets()` | ✗ | ✗ |
-| ~48k vocab p50 | ~600µs | ~70µs | ~60ms |
-| Required dependencies | none | none | none |
+Compared against real pip-installable libraries that solve adjacent problems:
 
-If you need pure prefix matching at maximum throughput and never need typo recovery or learning, a trie is faster. If vocabulary is ≤5k words and you need fuzzy matching only, BK-tree is simpler. Otherwise: this.
+| | adaptive-autocomplete | [whoosh](https://pypi.org/project/Whoosh/) | [flashtext](https://pypi.org/project/flashtext/) | [pyahocorasick](https://pypi.org/project/pyahocorasick/) |
+|---|---|---|---|---|
+| Typo recovery | ✓ SymSpell + trigram | ✓ (BM25, no edit distance) | ✗ | ✗ |
+| Learns from use | ✓ history + recency decay | ✗ | ✗ | ✗ |
+| Explains rankings | ✓ `explain()` per-word | ✗ | ✗ | ✗ |
+| Contribution % | ✓ `contribution_pct` | ✗ | ✗ | ✗ |
+| Contextual history | ✓ `ContextualHistory` | ✗ | ✗ | ✗ |
+| Serialisable config | ✓ `EngineConfig` | partial (index file) | ✗ | ✗ |
+| Batch + async API | ✓ | ✗ | ✗ | ✗ |
+| Weight optimiser | ✓ coordinate descent | ✗ | ✗ | ✗ |
+| ~48k vocab p50 | ~600µs | ~2–8ms (index load) | ~40µs (exact only) | ~30µs (exact only) |
+| Zero dependencies | ✓ | ✗ (six, whoosh) | ✓ | ✗ (C extension) |
+
+**When to choose something else**: if you need pure exact-match keyword extraction at maximum throughput, `flashtext` or `pyahocorasick` are faster. If you need full-text search with field weighting and stemming, `whoosh` is the right tool. If you need typo recovery + learned personalisation + explainability in a zero-dependency Python package, nothing else does all three.
 
 ---
 
 ## API reference
+
+Core surface - full signatures and parameters are in the module docstrings and `examples/`.
 
 ```python
 from aac.presets import create_engine, compare_presets
@@ -324,36 +364,33 @@ engine = create_engine("production")
 
 # Suggestions
 engine.suggest("helo")                           # → ['help', 'held', ...]
-engine.suggest("prog", limit=5)                  # limit results
+engine.suggest("prog", limit=5)
 engine.suggest_with_confidence("prog", limit=5)  # → [('programming', 1.0), ...]
 engine.suggest_with_history("prog", limit=5)     # → [('programming', 3), ...]
+engine.suggest_full("prog", limit=5)             # → [{'word': 'programming', 'count': 3, 'confidence': 1.0}, ...]
 
 # Learning
 engine.record_selection("prog", "programming")
-engine.reset_history()           # clear in-memory state; does not touch store
+engine.reset_history()
 
 # Explanation
 engine.explain("prog")           # → [RankingExplanation(...), ...]
 engine.explain_as_dicts("prog")  # → [{value, base_score, contribution_pct, ...}]
 
-# Config
-config = engine.to_config(preset="production", metadata={"env": "prod"})
-config.to_json()                 # serialise
-EngineConfig.from_json(text).build()             # reconstruct
-config_a.diff(config_b)          # audit differences
+# Batch
+engine.batch_suggest(["prog", "hel", "wor"], limit=5)
+engine.batch_explain(["prog", "hel"], limit=5)
+await engine.batch_suggest_async([\"prog\", \"hel\"])  # non-blocking; see GIL note in docstring
 
-# Comparison
-compare_presets("recieve")                           # all presets
-compare_presets("recieve", ["stateless", "production"])
+# Config round-trip
+config = engine.to_config(preset="production", metadata={"env": "prod"})
+EngineConfig.from_json(config.to_json()).build()
+config_a.diff(config_b)
 
 # Contextual learning
 ctx = ContextualHistory()
 ctx.record("prog", "programming", domain="python")
 engine = create_engine("production", history=ctx.for_domain("python"))
-
-# Introspection
-engine.history                   # live History instance
-engine.describe()                # {predictors, rankers, history_entries}
 
 # Async (FastAPI, aiohttp)
 await engine.suggest_async("prog", limit=5)
@@ -361,53 +398,106 @@ await engine.record_selection_async("prog", "programming")
 await engine.explain_async("prog")
 ```
 
-**`explain_as_dicts()` schema:**
+See [`examples/`](examples/) for FastAPI service, custom engine construction, contextual history, and evaluation usage.
+
+---
+
+## Evaluation
+
+The `aac.evaluation` module lets you measure ranking quality and tune weights - something no comparable autocomplete library provides.
+
+### Measure precision, MRR, NDCG against your own query log
 
 ```python
-[{
-    "value":               "programming",
-    "base_score":          1.84,
-    "history_boost":       1.50,
-    "final_score":         3.34,
-    "source":              "history",
-    "sources":             ["frequency", "history", "decay"],
-    "base_components":     {"frequency": 0.64, "history": 1.20, "symspell": 0.0, "trigram": 0.0},
-    "history_components":  {"decay": 1.50},
-    "contribution_pct":    {"frequency": 0.19, "history": 0.36, "decay": 0.45},
-}]
+from aac.evaluation import EvaluationHarness, make_query_log_from_history
+from aac.presets import create_engine
+
+# After recording real user selections:
+engine = create_engine("production")
+# engine.record_selection("prog", "programming")  # ... many times
+
+# Build a query log from recorded history (selections = ground truth)
+harness = EvaluationHarness.from_history(engine.history, k=10, min_count=2)
+
+result = harness.run(engine)
+print(result.summary())
+# n=142 queries @ k=10: P@k=0.214  MRR=0.847  NDCG=0.891  MAP=0.823  HitRate=0.944
+
+print(result.to_markdown_table())
+# | Metric             | Value  |
+# | ------------------ | ------ |
+# | MRR@k              | 0.847  |
+# | NDCG@k             | 0.891  |
+# | Hit rate           | 94.4%  |
+# ...
+
+# See which queries the engine struggles with
+for qr in result.worst_queries(5):
+    print(f"  {qr.entry.prefix!r:<15}  MRR={qr.mrr:.3f}  got={qr.ranked[:3]}")
 ```
 
-**Custom engine:**
+Or from the CLI:
+
+```bash
+aac eval --from-history                    # uses ~/.aac_history.json
+aac eval --from-history --k 5             # evaluate at k=5
+aac eval --from-history --markdown        # copy table into README
+aac eval --from-history --worst 10        # show 10 hardest queries
+aac eval --query-log queries.jsonl        # labelled JSONL file
+```
+
+### Compare presets on the same query log
 
 ```python
-from aac.engine import AutocompleteEngine
-from aac.predictors import FrequencyPredictor, HistoryPredictor, AdaptiveSymSpellPredictor
-from aac.domain.types import WeightedPredictor
-from aac.domain.history import History
-from aac.ranking.decay import DecayFunction, DecayRanker
-from aac.ranking.score import ScoreRanker
+from aac.evaluation.datasets import make_synthetic_query_log
+from aac.data import load_english_frequencies
+from aac.presets import create_engine
 
-vocab = {"hello": 100, "help": 80, "hero": 50}
-history = History()
+vocab = list(load_english_frequencies().keys())
+log = make_synthetic_query_log(vocab[:500], prefix_lengths=[2, 3, 4])
+harness = EvaluationHarness(log, k=10)
 
-engine = AutocompleteEngine(
-    predictors=[
-        WeightedPredictor(FrequencyPredictor(vocab), weight=1.0),
-        WeightedPredictor(HistoryPredictor(history), weight=1.5),
-        WeightedPredictor(
-            AdaptiveSymSpellPredictor(vocab.keys(), max_distance=2, frequencies=vocab),
-            weight=0.35,
-        ),
-    ],
-    ranker=[
-        ScoreRanker(),
-        DecayRanker(history, DecayFunction(half_life_seconds=3600), weight=2.0),
-    ],
-    history=history,
+for preset in ["stateless", "default", "production"]:
+    result = harness.run(create_engine(preset))
+    print(f"{preset:12s}  MRR={result.mean_mrr:.3f}  NDCG={result.mean_ndcg:.3f}  Hit={result.hit_rate:.1%}")
+```
+
+### Automated weight optimisation
+
+```python
+from aac.evaluation import EvaluationHarness, WeightOptimiser
+
+opt = WeightOptimiser(harness, metric="mrr")
+
+# Coordinate descent - fast, finds good weights in O(n_predictors × n_weights) evals
+result = opt.coordinate_descent(
+    base_preset="production",
+    weight_grid={
+        "frequency":         [0.5, 1.0, 2.0],
+        "history":           [0.8, 1.2, 1.6],
+        "adaptive_symspell": [0.2, 0.35, 0.5],
+        "trigram":           [0.2, 0.4,  0.6],
+    },
 )
+print(result.report())
+# WeightOptimiser - coordinate_descent
+# Metric:       mrr
+# Baseline:     0.8312
+# Optimised:    0.8791  (+0.0479, +5.8%)
+# Best weights:
+#   adaptive_symspell     0.350
+#   frequency             1.000
+#   history               1.600
+#   trigram               0.400
 ```
 
-See [`examples/fastapi_app.py`](examples/fastapi_app.py) for a FastAPI service with `ThreadSafeHistory` and atomic persistence.
+Or from the CLI:
+
+```bash
+aac tune --from-history                    # coordinate descent, metric=mrr
+aac tune --from-history --metric ndcg     # optimise for NDCG instead
+aac tune --from-history --strategy grid   # exhaustive grid search (slower)
+```
 
 ---
 
@@ -415,20 +505,18 @@ See [`examples/fastapi_app.py`](examples/fastapi_app.py) for a FastAPI service w
 
 20,000 `suggest()` calls across 10 prefixes, full 48,032-word vocabulary. Run `make benchmark` to reproduce.
 
-| Preset | avg | p50 | p99 | Notes |
-|--------|-----|-----|-----|-------|
-| `stateless` | ~82µs | ~73µs | ~124µs | Frequency only |
-| `default` | ~84µs | ~74µs | ~124µs | + history predictor |
-| `recency` | ~90µs | ~78µs | ~138µs | + decay ranker |
-| `production` | ~650µs | ~600µs | ~1.5ms | Hybrid SymSpell + trigram |
-| `robust` | ~400µs | ~360µs | ~900µs | SymSpell only |
-| `bktree` (48k) | ~60ms | - | - | ⚠ O(n) at this scale |
+| Preset | avg | p50 | p99 | Why |
+|--------|-----|-----|-----|-----|
+| `stateless` | ~82µs | ~73µs | ~124µs | `FrequencyPredictor` pre-sorts at construction; `predict()` is a top-N slice, O(max_results) not O(vocab) |
+| `default` | ~84µs | ~74µs | ~124µs | Same as `stateless` + O(k) history lookup where k = selections for this prefix |
+| `recency` | ~90µs | ~78µs | ~138µs | Adds `DecayRanker` which scans history once per call; cached for `explain()` |
+| `robust` | ~400µs | ~360µs | ~900µs | `SymSpellPredictor`: O(max_distance × |q|) index lookups + Levenshtein verification |
+| `production` | ~650µs | ~600µs | ~1.5ms | `AdaptiveSymSpellPredictor` (two indexes) + `TrigramPredictor` pre-filter; higher p99 than `robust` because trigram verification adds a second pass on the shortlist |
+| `bktree` (48k) | ~60ms | - | - | ⚠ BK-tree triangle-inequality pruning degrades to O(n) at this scale; the search ball at distance=2 covers most of the metric space |
 
-**Memory:** `production` builds two SymSpell indexes (tight + full, ~50MB each) and one trigram index (~30MB). Total footprint ~130MB at 48k vocabulary. `stateless` and `default` are ~10MB. If memory is the primary constraint, use `default` or bring a smaller vocabulary.
+**Memory:** `production` builds two SymSpell indexes (tight + full, ~50MB each) and one trigram index (~30MB). Total footprint ~130MB at 48k vocabulary. `stateless` and `default` are ~10MB. If memory is the constraint, use `default` or bring a smaller vocabulary.
 
-`FrequencyPredictor` pre-sorts its prefix index at construction time (O(v log v) once) so `predict()` is a top-N slice - O(max_results), not O(vocabulary). The default `max_results=100` was raised from 20 in v0.6.0 to prevent silent truncation of words ranked 21–100 in frequency for their prefix.
-
-`TrigramPredictor` beats BK-tree at scale because trigram overlap pre-filters to a candidate shortlist before Levenshtein. At `max_distance=2` over 48k words, BK-tree's triangle-inequality pruning degrades toward O(n) - the search ball covers most of the metric space.
+CI enforces performance bounds: `stateless` p99 < 5ms, `production` p99 < 30ms. These are deliberately generous (10–20× the measured values) to avoid flakiness on loaded CI runners while still catching catastrophic regressions.
 
 ---
 
@@ -481,7 +569,7 @@ make benchmark   # latency numbers
 
 ## Tests
 
-449 tests across correctness invariants, integration, and property-based fuzzing.
+594 tests across correctness invariants, IR metrics, evaluation harness, concurrency, async API, integration, and property-based fuzzing.
 
 **Correctness guarantees:**
 - SymSpell brute-force equivalence: every result matches linear scan exactly across multiple queries and distance thresholds.
@@ -491,7 +579,7 @@ make benchmark   # latency numbers
 - Ranker invariant: `RuntimeError` raised if a ranker adds or removes candidates.
 - Decay no double-counting: pre-ranking scores are ground truth; ranker deltas captured in forward pass.
 
-**New in v0.6.0:**
+**Correctness guarantees (full list in CHANGELOG):**
 - `FrequencyPredictor` max_results=100: words ranked 21–100 in frequency now returned; "hello" for prefix "he" verified present.
 - `base_components` completeness: all predictor names present; `0.0` distinguishes "below threshold" from "not configured".
 - `contribution_pct`: values in (0, 1]; zero-contribution sources omitted; dominant source correct after many selections.
@@ -506,32 +594,10 @@ make benchmark   # latency numbers
 
 ---
 
-## Migrating from 0.5.x to 0.6.0
-
-### Potentially breaking
-
-**`FrequencyPredictor` default `max_results` changed from 20 to 100.** If you were relying on the old truncation behaviour (e.g. to limit memory at a small vocabulary size), pass `max_results=20` explicitly. For most use cases this change improves correctness.
-
-**`RankingExplanation` gains `contribution_pct` field.** Code constructing `RankingExplanation` directly with positional arguments may break - use keyword arguments. Code using `asdict(explanation)` or `to_dict()` will now see the additional key; downstream consumers that validate exact key sets will need updating.
-
-**`explain()` `base_components` now always complete.** If you were checking for the absence of a predictor name as a signal that it didn't contribute, you need to check for `value == 0.0` instead.
-
-**`explain()` `history_components` now always includes all non-score ranker names.** Zero-boost rankers appear with `0.0` rather than being absent.
-
-### Non-breaking additions
-
-- `History.copy()` - independent deep copy.
-- `ContextualHistory` - domain-partitioned history.
-- `EngineConfig` / `engine.to_config()` / `EngineConfig.from_json().build()` / `config.diff()`.
-- `RankingExplanation.contribution_pct` - relative source percentages.
-- Demo `/compare` endpoint now instant (engines cached at startup).
-
----
-
 ## What I'd change
 
 **The `default` preset ignores time.** Raw selection counts don't decay. Something selected 50 times six months ago outweighs something selected twice yesterday. `recency` and `production` fix this, but the right design bakes time-awareness into the core history model rather than adding it in the ranker. The CHANGELOG has this honest admission about the original design decision.
 
 **Presets obscure composability.** The direct constructor is already the better interface. Presets are convenience wrappers that hide the weighting decisions from users who might benefit from tuning them. I shipped presets first and the constructor second; it should have been the other way around, with presets as thin named constructors over the direct API.
 
-**`EngineConfig.build()` raises for custom engines.** Reconstructing a custom engine from config requires caller-supplied predictor instances that cannot be inferred from names alone. A full solution would register predictor classes by name (like a plugin registry) so `build()` could reconstruct any engine. The current implementation handles the common case (preset engines) correctly; custom engine reconstruction is left to the caller.
+**The confidence score formula is a heuristic.** The hybrid approach (raw normalisation below 4x dominance threshold, rank-based weighting above it) produces intuitively reasonable output but has no principled statistical justification. A cleaner solution would model user selection probability directly - something like a contextual bandit where each suggestion's selection probability is estimated from history and the confidence IS that probability estimate. That is a real algorithm; this is a workaround that happens to produce sensible numbers.

@@ -1,0 +1,34 @@
+# docker-compose.yml
+#
+# Run the interactive demo without installing Python or dependencies locally.
+#
+# Usage:
+#   docker compose up          # start the demo
+#   docker compose down        # stop and remove the container
+#
+# The demo UI opens at http://localhost:5000
+# Vocabulary index builds on first start (~5s), cached in a named volume.
+
+services:
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    ports:
+      - "5000:5000"
+    volumes:
+      # Cache the built vocabulary index between restarts so subsequent
+      # `docker compose up` starts in <1s instead of ~5s.
+      - aac-vocab-cache:/app/.aac_cache
+    environment:
+      - AAC_HOST=0.0.0.0
+      - AAC_PORT=5000
+      - AAC_PRESET=production
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  aac-vocab-cache:

@@ -1,3 +1,4 @@
+"""Core domain types: Suggestion, ScoredSuggestion, CompletionContext, WeightedPredictor, Ranker protocol."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -26,10 +27,10 @@ class CompletionContext:
             cursor_pos is clamped to [0, len(text)], so out-of-range values
             are safe and return the longest valid prefix.
 
-            Examples:
-                text="git checkout", cursor_pos=7  ->  "ch"   (cursor mid-word)
-                text="git checkout", cursor_pos=12 ->  "checkou"  (last char in-progress)
-                text="he", cursor_pos=None         ->  "he"   (full text, no cursor)
+            Examples (cursor_pos counts characters from the start of text):
+                text="git ch", cursor_pos=6  ->  "c"   (cursor at end: "h" in-progress)
+                text="git ch", cursor_pos=5  ->  ""    (cursor before "c": whole token in-progress)
+                text="he", cursor_pos=None   ->  "he"  (full text, no cursor)
         """
         if self.cursor_pos is not None:
             before = self.text[: self.cursor_pos]
@@ -110,12 +111,15 @@ class WeightedPredictor:
     Predictor paired with a weight applied during score aggregation.
 
     Weights must be positive. A weight of 0.0 would silence the predictor
-    entirely (use a predictor list without it instead). A weight above ~10.0
-    will push scores outside the (0, 1] range of the other predictors and
-    make the weighted sum dominated by this predictor alone - which is almost
-    never the intended behaviour. Both are caught at construction time.
+    entirely - remove it from the predictor list instead. Weights above ~5.0
+    are rarely useful: they push the weighted sum to be dominated by this
+    predictor alone, defeating the purpose of combining signals. The practical
+    useful range is (0.0, 5.0]. Default is 1.0.
 
-    The practical useful range is (0.0, 5.0]. Default is 1.0.
+    The positivity constraint is enforced at construction time. There is no
+    upper-bound enforcement - very high weights are unusual but not necessarily
+    wrong (e.g. a domain-specific predictor intentionally overwhelming the
+    general frequency signal).
     """
 
     predictor: Predictor

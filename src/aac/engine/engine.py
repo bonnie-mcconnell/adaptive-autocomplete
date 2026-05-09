@@ -1,3 +1,4 @@
+"""AutocompleteEngine: the main public API. Combines predictors, rankers, and history into a single object."""
 from __future__ import annotations
 
 import asyncio
@@ -13,12 +14,32 @@ from aac.domain.types import (
     WeightedPredictor,
 )
 from aac.ranking.base import Ranker
-from aac.ranking.contracts import LearnsFromHistory, PredictorLearnsFromHistory
+from aac.ranking.contracts import (
+    LearnsFromHistory,
+    PredictorAcceptsRecord,
+    PredictorLearnsFromHistory,
+)
 from aac.ranking.explanation import RankingExplanation
 from aac.ranking.score import ScoreRanker
 
 if TYPE_CHECKING:
     from aac.engine.config import EngineConfig
+
+# ---------------------------------------------------------------------------
+# Confidence scoring constants
+# ---------------------------------------------------------------------------
+
+# When the top-ranked candidate's score exceeds this multiple of the second
+# candidate's score, we consider it "dominant" - a heavily-learned selection.
+# Raw score normalisation in that regime makes alternatives look nearly worthless
+# (e.g. 6% confidence) even when they are excellent completions. Above this
+# threshold we switch to rank-based confidence so alternatives remain meaningful.
+_DOMINANCE_THRESHOLD: float = 4.0
+
+# Rank-decay rate used when the top candidate is dominant.
+# Position k receives confidence 1 / (1 + k * _RANK_DECAY_RATE), capped at 1.0.
+# k=0 → 1.00, k=1 → 0.71, k=2 → 0.56, k=3 → 0.47, k=4 → 0.41
+_RANK_DECAY_RATE: float = 0.4
 
 
 class DebugState(TypedDict):
@@ -196,6 +217,36 @@ class AutocompleteEngine:
 
         return list(aggregated.values()), breakdown
 
+    @staticmethod
+    def _check_ranker_invariant(
+        ranker_name: str,
+        before: list[ScoredSuggestion],
+        after: list[ScoredSuggestion],
+    ) -> None:
+        """
+        Enforce the ranker set-preservation invariant.
+
+        Rankers may reorder and rescore suggestions but must not add or
+        remove entries.  Calling this after every ranker step ensures any
+        violation is caught immediately and names the offending ranker.
+
+        Extracted as a static method so both ``_apply_ranking()`` and
+        ``explain()`` share exactly the same check with no code duplication.
+        If the invariant description ever changes it changes in one place.
+
+        Raises:
+            RuntimeError: If the ranker added or removed any suggestion.
+        """
+        before_values = {s.suggestion.value for s in before}
+        after_values = {s.suggestion.value for s in after}
+        if after_values != before_values:
+            added = after_values - before_values
+            removed = before_values - after_values
+            raise RuntimeError(
+                f"Ranker {ranker_name} modified the suggestion set. "
+                f"Added: {added or 'none'}. Removed: {removed or 'none'}."
+            )
+
     def _apply_ranking(
         self,
         ctx: CompletionContext,
@@ -212,18 +263,11 @@ class AutocompleteEngine:
             ValueError: If a ranker produces a non-finite score.
         """
         ranked = scored
-        original_values = {s.suggestion.value for s in ranked}
 
         for ranker in self._rankers:
+            before = ranked
             ranked = ranker.rank(ctx.text, ranked)
-            after_values = {s.suggestion.value for s in ranked}
-            if after_values != original_values:
-                added = after_values - original_values
-                removed = original_values - after_values
-                raise RuntimeError(
-                    f"Ranker {ranker.__class__.__name__} modified the suggestion set. "
-                    f"Added: {added or 'none'}. Removed: {removed or 'none'}."
-                )
+            self._check_ranker_invariant(ranker.__class__.__name__, before, ranked)
 
         for s in ranked:
             if not math.isfinite(s.score):
@@ -320,18 +364,8 @@ class AutocompleteEngine:
 
         for ranker in self._rankers:
             pre_scores = {s.suggestion.value: s.score for s in running}
-
-            # Enforce the ranker invariant here too, identical to _apply_ranking.
-            original_values = {s.suggestion.value for s in running}
             after = ranker.rank(ctx.text, running)
-            after_values = {s.suggestion.value for s in after}
-            if after_values != original_values:
-                added = after_values - original_values
-                removed = original_values - after_values
-                raise RuntimeError(
-                    f"Ranker {ranker.__class__.__name__} modified the suggestion set. "
-                    f"Added: {added or 'none'}. Removed: {removed or 'none'}."
-                )
+            self._check_ranker_invariant(ranker.__class__.__name__, running, after)
 
             post_scores = {s.suggestion.value: s.score for s in after}
             source_name = ranker.__class__.__name__.replace("Ranker", "").lower()
@@ -507,6 +541,72 @@ class AutocompleteEngine:
             for s in ranked
         ]
 
+    def suggest_full(
+        self,
+        text: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        """
+        Return ranked suggestions with count and confidence in a single pipeline pass.
+
+        Combines ``suggest_with_history()`` and ``suggest_with_confidence()``
+        into one call so the pipeline runs exactly once. Each result is a dict
+        with keys ``word`` (str), ``count`` (int), and ``confidence`` (float).
+
+        Use this when you need all three signals - for example in a demo UI
+        that shows a count badge and a confidence bar alongside each suggestion.
+        Calling ``suggest_with_history`` and ``suggest_with_confidence``
+        separately runs the full score → rank pipeline twice, which doubles
+        SymSpell lookups, trigram lookups, and decay calculations per request.
+
+        Parameters:
+            text:  The input prefix to complete.
+            limit: Maximum number of suggestions to return.
+
+        Returns:
+            List of ``{"word": str, "count": int, "confidence": float}`` dicts
+            in ranked order.
+
+        Example::
+
+            for item in engine.suggest_full("prog", limit=10):
+                print(f"{item['word']}  ({item['count']})  {item['confidence']:.0%}")
+        """
+        ctx = CompletionContext(text)
+        ranked = self._apply_ranking(ctx, self._score(ctx))
+        if limit is not None:
+            ranked = ranked[:limit]
+
+        prefix = ctx.prefix()
+        counts = self._history.counts_for_prefix(prefix)
+
+        # Confidence computation (same logic as suggest_with_confidence,
+        # but applied to the already-ranked list - no second pipeline run).
+        if not ranked:
+            return []
+
+        top_score = ranked[0].score
+        second_score = ranked[1].score if len(ranked) > 1 else 0.0
+        safe_second = max(abs(second_score), 1e-9)
+        is_dominant = top_score / safe_second > _DOMINANCE_THRESHOLD
+        normaliser = max(abs(top_score), 1e-9)
+
+        results = []
+        for k, s in enumerate(ranked):
+            value = s.suggestion.value
+            if is_dominant:
+                confidence = 1.0 / (1.0 + k * _RANK_DECAY_RATE)
+            else:
+                confidence = s.score / normaliser
+            results.append({
+                "word": value,
+                "count": counts.get(value, 0),
+                "confidence": float(min(1.0, max(0.0, confidence))),
+            })
+
+        return results
+
     def suggest_with_confidence(
         self,
         text: str,
@@ -517,13 +617,24 @@ class AutocompleteEngine:
         Return ranked suggestions with normalised confidence scores.
 
         Each suggestion is paired with a confidence value in (0, 1] where
-        1.0 means the top-ranked candidate.  Scores are normalised against
-        the top result, so they represent relative ranking strength rather
-        than raw internal scores (which are not meaningful across queries).
+        1.0 means the top-ranked candidate.
 
-        Use this when you want to style suggestions differently - for
-        example, bolding high-confidence results or drawing a visual
-        separator before the low-confidence tail.
+        **Normalisation design:**
+
+        Raw score division (score / top_score) becomes misleading when
+        history learning creates large score gaps - e.g. after 5 selections,
+        the top result may score 9.1 while the second scores 0.57, giving
+        the second a 6% confidence even though it's an excellent match.
+
+        This method uses a hybrid approach:
+          - If the top score dominates by more than ``_DOMINANCE_THRESHOLD`` (4×),
+            rank-based weighting is applied: position k gets
+            ``1 / (1 + k * _RANK_DECAY_RATE)``, capped at 1.0.
+            This reflects that a heavily-selected word IS the right answer
+            (high confidence) while preserving meaningful separation for
+            the remaining alternatives.
+          - If scores are in a normal range (no strong dominance), raw
+            normalised scores are used - they're meaningful and stable.
 
         Parameters:
             text:  The input prefix to complete.
@@ -536,7 +647,7 @@ class AutocompleteEngine:
 
             results = engine.suggest_with_confidence("prog", limit=5)
             for word, conf in results:
-                label = "★ " if conf > 0.8 else "  "
+                label = "\u2605 " if conf > 0.8 else "  "
                 print(f"{label}{word}  ({conf:.0%})")
         """
         ctx = CompletionContext(text)
@@ -547,21 +658,31 @@ class AutocompleteEngine:
         if not ranked:
             return []
 
+        if len(ranked) == 1:
+            return [(ranked[0].suggestion.value, 1.0)]
+
         top_score = ranked[0].score
-        # Guard against division by zero or near-zero scores.  The `or 1.0`
-        # pattern only catches exactly-zero values - a top_score of 1e-14
-        # (possible with custom vocabularies where all words have frequency 1
-        # and no history) would divide everything by 1e-14 and push all
-        # confidences near 1.0, making the normalisation meaningless.
-        # Using max(abs(top_score), 1e-9) handles both the zero case and the
-        # near-zero case correctly, and abs() prevents a negative top score
-        # (which cannot happen under normal operation but is defensive) from
-        # inverting the sign of all confidences.
+        second_score = ranked[1].score if len(ranked) > 1 else 0.0
+
+        # Detect strong dominance: if the top candidate has been heavily
+        # boosted by learning (top > _DOMINANCE_THRESHOLD × second), raw score
+        # normalisation would make all other results look nearly worthless.
+        # Use rank-based weighting instead: position k gets
+        # 1/(1 + k * _RANK_DECAY_RATE). See module constants for rationale.
+        safe_second = max(abs(second_score), 1e-9)
+        is_dominant = top_score / safe_second > _DOMINANCE_THRESHOLD
+
         normaliser = max(abs(top_score), 1e-9)
-        return [
-            (s.suggestion.value, s.score / normaliser)
-            for s in ranked
-        ]
+
+        results = []
+        for k, s in enumerate(ranked):
+            if is_dominant:
+                conf = 1.0 / (1.0 + k * _RANK_DECAY_RATE)
+            else:
+                conf = s.score / normaliser
+            results.append((s.suggestion.value, min(1.0, max(0.0, conf))))
+
+        return results
 
     def reset_history(self) -> None:
         """
@@ -624,9 +745,13 @@ class AutocompleteEngine:
         self._history.record(ctx.prefix(), value)
 
         for weighted in self._predictors:
-            record = getattr(weighted.predictor, "record", None)
-            if callable(record):
-                record(ctx, value)
+            # runtime_checkable Protocol checks attribute *presence* only, not
+            # type. A predictor with a non-callable .record attribute (e.g. a
+            # string) will pass isinstance() but must not be called.
+            if isinstance(weighted.predictor, PredictorAcceptsRecord) and callable(
+                weighted.predictor.record
+            ):
+                weighted.predictor.record(ctx, value)
 
     # ------------------------------------------------------------------
     # Debug (INTENTIONALLY UNSTABLE)
@@ -646,6 +771,106 @@ class AutocompleteEngine:
             "ranked": ranked,
             "suggestions": [s.suggestion.value for s in ranked],
         }
+
+    def batch_suggest(
+        self,
+        texts: list[str],
+        *,
+        limit: int | None = None,
+    ) -> dict[str, list[str]]:
+        """
+        Return suggestions for multiple prefixes in one call.
+
+        Equivalent to calling ``suggest()`` on each prefix individually,
+        but expressed as a single API call so callers don't need a loop.
+        Useful for: evaluation pipelines, search dashboards pre-fetching
+        completions for multiple fields, test harnesses.
+
+        Parameters:
+            texts: List of input prefixes to complete.
+            limit: Maximum number of suggestions per prefix.
+
+        Returns:
+            Dict mapping each prefix to its suggestion list.
+            Preserves input order. If a prefix produces no suggestions,
+            its value is an empty list.
+
+        Example::
+
+            results = engine.batch_suggest(
+                ["prog", "hel", "wor"],
+                limit=5,
+            )
+            # {
+            #   "prog": ["programming", "program", ...],
+            #   "hel":  ["help", "hello", "held", ...],
+            #   "wor":  ["word", "world", "work", ...],
+            # }
+        """
+        return {text: self.suggest(text, limit=limit) for text in texts}
+
+    def batch_explain(
+        self,
+        texts: list[str],
+        *,
+        limit: int | None = None,
+    ) -> dict[str, list[RankingExplanation]]:
+        """
+        Return score explanations for multiple prefixes in one call.
+
+        Equivalent to calling ``explain()`` on each prefix individually.
+        Useful for offline analysis of ranking behaviour across a query set.
+
+        Parameters:
+            texts: List of input prefixes to explain.
+            limit: Maximum number of explanations per prefix.
+
+        Returns:
+            Dict mapping each prefix to its explanation list.
+
+        Example::
+
+            explanations = engine.batch_explain(["prog", "hel"])
+            for prefix, exps in explanations.items():
+                print(f"{prefix}: top={exps[0].value} final={exps[0].final_score:.3f}")
+        """
+        result = {}
+        for text in texts:
+            exps = self.explain(text)
+            result[text] = exps[:limit] if limit is not None else exps
+        return result
+
+    async def batch_suggest_async(
+        self,
+        texts: list[str],
+        *,
+        limit: int | None = None,
+    ) -> dict[str, list[str]]:
+        """
+        Async version of batch_suggest().
+
+        Schedules each query on the thread pool executor via suggest_async()
+        and awaits all results with asyncio.gather(). This keeps the event
+        loop unblocked while queries run - the primary use case is async web
+        frameworks (FastAPI, Starlette) where blocking the event loop degrades
+        all concurrent request handlers.
+
+        **GIL note**: on CPython, pure-Python CPU-bound work does not run in
+        true parallel across threads - threads take turns holding the GIL.
+        batch_suggest_async improves *event-loop responsiveness* but does not
+        reduce *wall-clock latency* for the batch itself compared to a
+        sequential loop.  If you need genuine parallelism for large batches,
+        use ProcessPoolExecutor or run the engine in a worker process.
+
+        Example::
+
+            @app.get("/batch")
+            async def batch(q: list[str]) -> dict[str, list[str]]:
+                return await engine.batch_suggest_async(q, limit=5)
+        """
+        tasks = [self.suggest_async(text, limit=limit) for text in texts]
+        results = await asyncio.gather(*tasks)
+        return dict(zip(texts, results, strict=False))
 
     # ------------------------------------------------------------------
     # Async API
@@ -697,6 +922,10 @@ class AutocompleteEngine:
         Return a typed description of the engine configuration.
 
         Intended for CLI inspection, debugging, and documentation.
+        ``history_entries`` is the total number of recorded selections across
+        all prefixes.  Reading ``len(self._history._entries)`` directly is
+        intentional: ``entries()`` returns a full tuple copy (O(n) allocation)
+        while ``_entries`` is the underlying list (O(1) len).
         """
         return {
             "predictors": [
@@ -704,7 +933,7 @@ class AutocompleteEngine:
                 for wp in self._predictors
             ],
             "rankers": [r.__class__.__name__ for r in self._rankers],
-            "history_entries": len(list(self._history.entries())),
+            "history_entries": len(self._history._entries),
         }
 
     @property
@@ -733,8 +962,9 @@ class AutocompleteEngine:
         Parameters:
             preset:   If this engine was built via ``create_engine()``,
                       pass the preset name here so ``config.build()`` can
-                      use the fast path.  If None, ``config.build()`` will
-                      raise ``NotImplementedError`` for custom engines.
+                      use the fast preset reconstruction path.  If None,
+                      ``config.build()`` uses the ``PredictorRegistry``
+                      to reconstruct each predictor by name.
             metadata: Arbitrary caller-supplied key-value pairs stored
                       alongside the config (e.g. vocabulary path, deploy
                       timestamp, git SHA).

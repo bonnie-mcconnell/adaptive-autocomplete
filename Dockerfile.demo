@@ -1,0 +1,39 @@
+# Dockerfile.demo
+#
+# Minimal image for running the adaptive-autocomplete interactive demo.
+# Not intended for production deployment - the demo is a development tool.
+#
+# Build:  docker build -f Dockerfile.demo -t aac-demo .
+# Run:    docker run -p 5000:5000 aac-demo
+#
+# Or via docker compose (recommended):
+#   docker compose up
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install the package in one layer so Docker cache is invalidated only
+# when pyproject.toml or the source changes, not on every file edit.
+COPY pyproject.toml poetry.lock ./
+RUN pip install --no-cache-dir poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-interaction --without dev
+
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+COPY examples/ ./examples/
+
+# Expose the demo port. Configurable via AAC_PORT env var.
+EXPOSE 5000
+
+# Healthcheck using Python's urllib - no curl required in slim images.
+# Checks the /health endpoint exposed by the demo server.
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" || exit 1
+
+ENV AAC_HOST=0.0.0.0
+ENV AAC_PORT=5000
+ENV AAC_PRESET=production
+
+CMD ["sh", "-c", "aac demo --host ${AAC_HOST} --port ${AAC_PORT} --preset ${AAC_PRESET} --no-browser"]

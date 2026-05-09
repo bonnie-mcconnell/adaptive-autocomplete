@@ -21,11 +21,17 @@ def _run(*args: str, history_path: Path | None = None) -> tuple[int, str]:
     Invoke main() with the given CLI args and capture stdout.
 
     Returns (exit_code, stdout_text). Exit code 0 = success.
+
+    The helper finds the subcommand (first non-flag positional arg) and
+    inserts --history-path immediately after it so the flag is at the
+    subcommand level, not at the global level.
     """
-    argv = ["aac"]
+    argv = ["aac"] + list(args)
     if history_path is not None:
+        # Find where the subcommand is (first non-flag arg after "aac")
+        # and insert --history-path after it.
+        # e.g. ["aac", "suggest", "he"] -> ["aac", "suggest", "he", "--history-path", "..."]
         argv += ["--history-path", str(history_path)]
-    argv += list(args)
 
     buf = StringIO()
     exit_code = 0
@@ -43,7 +49,7 @@ def _run(*args: str, history_path: Path | None = None) -> tuple[int, str]:
 # ------------------------------------------------------------------
 
 def test_suggest_returns_completions(tmp_path: Path) -> None:
-    code, out = _run("--preset", "stateless", "suggest", "he",
+    code, out = _run("suggest", "he", "--preset", "stateless",
                      history_path=tmp_path / "h.json")
     assert code == 0
     words = [w for w in out.strip().splitlines() if w]
@@ -52,7 +58,7 @@ def test_suggest_returns_completions(tmp_path: Path) -> None:
 
 
 def test_suggest_limit_respected(tmp_path: Path) -> None:
-    code, out = _run("--preset", "stateless", "suggest", "he", "--limit", "3",
+    code, out = _run("suggest", "he", "--preset", "stateless", "--limit", "3",
                      history_path=tmp_path / "h.json")
     assert code == 0
     words = [w for w in out.strip().splitlines() if w]
@@ -60,7 +66,7 @@ def test_suggest_limit_respected(tmp_path: Path) -> None:
 
 
 def test_suggest_unknown_prefix_no_crash(tmp_path: Path) -> None:
-    code, out = _run("--preset", "stateless", "suggest", "zzzqqqxxx",
+    code, out = _run("suggest", "zzzqqqxxx", "--preset", "stateless",
                      history_path=tmp_path / "h.json")
     assert code == 0  # must not crash
 
@@ -70,7 +76,7 @@ def test_suggest_unknown_prefix_no_crash(tmp_path: Path) -> None:
 # ------------------------------------------------------------------
 
 def test_explain_contains_score_fields(tmp_path: Path) -> None:
-    code, out = _run("--preset", "stateless", "explain", "he",
+    code, out = _run("explain", "he", "--preset", "stateless",
                      history_path=tmp_path / "h.json")
     assert code == 0
     assert "score=" in out
@@ -78,7 +84,7 @@ def test_explain_contains_score_fields(tmp_path: Path) -> None:
 
 
 def test_explain_limit_respected(tmp_path: Path) -> None:
-    code, out = _run("--preset", "stateless", "explain", "he", "--limit", "2",
+    code, out = _run("explain", "he", "--preset", "stateless", "--limit", "2",
                      history_path=tmp_path / "h.json")
     assert code == 0
     scored_lines = [line for line in out.strip().splitlines() if "score=" in line]
@@ -90,7 +96,7 @@ def test_explain_limit_respected(tmp_path: Path) -> None:
 # ------------------------------------------------------------------
 
 def test_record_outputs_confirmation(tmp_path: Path) -> None:
-    code, out = _run("--preset", "default", "record", "he", "hello",
+    code, out = _run("record", "he", "hello", "--preset", "default",
                      history_path=tmp_path / "h.json")
     assert code == 0
     assert "hello" in out
@@ -99,7 +105,7 @@ def test_record_outputs_confirmation(tmp_path: Path) -> None:
 
 def test_record_persists_history_to_disk(tmp_path: Path) -> None:
     history_file = tmp_path / "history.json"
-    code, _ = _run("--preset", "default", "record", "he", "hero",
+    code, _ = _run("record", "he", "hero", "--preset", "default",
                    history_path=history_file)
     assert code == 0
     assert history_file.exists()
@@ -120,16 +126,16 @@ def test_record_then_suggest_shows_learning(tmp_path: Path) -> None:
     history_file = tmp_path / "history.json"
 
     # Baseline: hero should not appear in a top-5 list
-    _, before = _run("--preset", "default", "suggest", "he", "--limit", "5",
+    _, before = _run("suggest", "he", "--limit", "5", "--preset", "default",
                      history_path=history_file)
     assert "hero" not in before.strip().splitlines()
 
     # Record hero enough times to lift it into a top-30 window
     for _ in range(5):
-        _run("--preset", "default", "record", "he", "hero",
+        _run("record", "he", "hero", "--preset", "default",
              history_path=history_file)
 
-    code, out = _run("--preset", "default", "suggest", "he", "--limit", "30",
+    code, out = _run("suggest", "he", "--limit", "30", "--preset", "default",
                      history_path=history_file)
     assert code == 0
     assert "hero" in out.strip().splitlines()
@@ -141,10 +147,9 @@ def test_record_then_suggest_shows_learning(tmp_path: Path) -> None:
 
 def test_presets_subcommand_lists_all(tmp_path: Path) -> None:
     from aac.presets import available_presets
-    code, out = _run("presets", history_path=tmp_path / "h.json")
+    code, out = _run("presets")
     assert code == 0
     for name in available_presets():
-        assert name in out
         assert name in out
 
 
@@ -153,7 +158,7 @@ def test_presets_subcommand_lists_all(tmp_path: Path) -> None:
 # ------------------------------------------------------------------
 
 def test_invalid_preset_exits_nonzero(tmp_path: Path) -> None:
-    code, _ = _run("--preset", "nonexistent_preset_xyz", "suggest", "he",
+    code, _ = _run("suggest", "he", "--preset", "nonexistent_preset_xyz",
                    history_path=tmp_path / "h.json")
     assert code != 0
 
@@ -173,7 +178,7 @@ def test_missing_subcommand_exits_nonzero() -> None:
 # ------------------------------------------------------------------
 
 def test_debug_outputs_scored_and_ranked(tmp_path: Path) -> None:
-    code, out = _run("--preset", "stateless", "debug", "he",
+    code, out = _run("debug", "he", "--preset", "stateless",
                      history_path=tmp_path / "h.json")
     assert code == 0
     assert "Scored:" in out
@@ -186,7 +191,7 @@ def test_debug_outputs_scored_and_ranked(tmp_path: Path) -> None:
 
 def test_explain_no_suggestions_prints_message(tmp_path: Path) -> None:
     """explain on a prefix that produces no completions must not crash."""
-    code, out = _run("--preset", "stateless", "explain", "zzzqqqxxx",
+    code, out = _run("explain", "zzzqqqxxx", "--preset", "stateless",
                      history_path=tmp_path / "h.json")
     assert code == 0
     # Either empty output or the no-explanation message - must not crash
@@ -230,9 +235,9 @@ def test_broken_pipe_exits_cleanly(tmp_path: Path) -> None:
     from unittest.mock import patch as _patch
 
     exit_code = 0
-    with _patch("sys.argv", ["aac", "--preset", "stateless",
-                              "--history-path", str(tmp_path / "h.json"),
-                              "suggest", "he"]):
+    with _patch("sys.argv", ["aac", "suggest", "he",
+                              "--preset", "stateless",
+                              "--history-path", str(tmp_path / "h.json")]):
         with _patch("aac.cli.suggest.run", side_effect=BrokenPipeError):
             try:
                 main()
@@ -258,7 +263,7 @@ def test_explain_recency_column_always_shows_sign(tmp_path: Path) -> None:
     (space prefix) instead of '+0.00', inconsistent with non-zero boosts
     and with demo.py output.
     """
-    code, out = _run("--preset", "stateless", "explain", "he",
+    code, out = _run("explain", "he", "--preset", "stateless",
                      history_path=tmp_path / "h.json")
     assert code == 0
     lines = [ln for ln in out.strip().splitlines() if "score=" in ln]
@@ -276,8 +281,8 @@ class TestVocabPathFlag:
         vocab_file = tmp_path / "words.txt"
         vocab_file.write_text("zork\nzeppelin\nzigzag\n")
         code, out = _run(
-            "--vocab-path", str(vocab_file),
             "suggest", "z",
+            "--vocab-path", str(vocab_file),
             history_path=tmp_path / "h.json",
         )
         assert code == 0
@@ -288,9 +293,9 @@ class TestVocabPathFlag:
         corpus_file = tmp_path / "corpus.txt"
         corpus_file.write_text("programming programming programming python python")
         code, out = _run(
+            "suggest", "prog",
             "--vocab-path", str(corpus_file),
             "--vocab-format", "text",
-            "suggest", "prog",
             history_path=tmp_path / "h.json",
         )
         assert code == 0
@@ -298,8 +303,8 @@ class TestVocabPathFlag:
 
     def test_missing_vocab_file_exits_with_error(self, tmp_path: Path) -> None:
         code, out = _run(
-            "--vocab-path", str(tmp_path / "nonexistent.txt"),
             "suggest", "he",
+            "--vocab-path", str(tmp_path / "nonexistent.txt"),
             history_path=tmp_path / "h.json",
         )
         assert code != 0
@@ -308,8 +313,8 @@ class TestVocabPathFlag:
         vocab_file = tmp_path / "words.txt"
         vocab_file.write_text("hello\nhelp\nhero\n")
         code, out = _run(
-            "--vocab-path", str(vocab_file),
             "explain", "he",
+            "--vocab-path", str(vocab_file),
             history_path=tmp_path / "h.json",
         )
         assert code == 0
@@ -491,6 +496,53 @@ class TestDemoSubcommand:
         data = _json.loads(body)
         assert status == 200
         assert data.get("recorded") is False
+
+    def test_demo_suggest_invalid_limit_does_not_crash(self) -> None:
+        """GET /suggest?q=he&limit=abc must not crash - returns valid JSON."""
+        import json as _json
+
+        _, server, _ = self._make_server({"hello": 100, "help": 80})
+        status, body = self._one_request(server, "/suggest?q=he&limit=abc")
+        assert status == 200
+        data = _json.loads(body)
+        assert isinstance(data, list), "Should return a list even with invalid limit"
+
+    def test_demo_explain_invalid_limit_does_not_crash(self) -> None:
+        """GET /explain?q=he&limit=xyz must not crash."""
+        import json as _json
+
+        _, server, _ = self._make_server({"hello": 100, "help": 80})
+        status, body = self._one_request(server, "/explain?q=he&limit=xyz")
+        assert status == 200
+        data = _json.loads(body)
+        assert isinstance(data, list)
+
+    def test_demo_suggest_uses_single_pipeline_pass(self) -> None:
+        """
+        /suggest must return word+count+confidence using suggest_full().
+        The response schema must match suggest_full() output, not the old
+        double-call (suggest_with_history + suggest_with_confidence) schema.
+        Verified by checking that confidence values are consistent with
+        what a single ranked list would produce - not a mismatched merge.
+        """
+        import json as _json
+
+        _, server, _ = self._make_server(
+            {"hello": 100, "help": 80, "hero": 60}, preset="default"
+        )
+        status, body = self._one_request(server, "/suggest?q=he&limit=5")
+        assert status == 200
+        data = _json.loads(body)
+
+        assert len(data) > 0
+        for item in data:
+            assert "word" in item
+            assert "count" in item
+            assert "confidence" in item
+            assert 0.0 <= item["confidence"] <= 1.0
+
+        # Top result must have highest confidence
+        assert data[0]["confidence"] >= data[-1]["confidence"]
 
     def test_demo_unknown_path_returns_404(self) -> None:
         """Unknown paths must return 404, not crash."""

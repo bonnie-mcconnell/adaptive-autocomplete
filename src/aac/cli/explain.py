@@ -1,3 +1,4 @@
+"""aac explain subcommand: show per-suggestion score breakdowns in human-readable format."""
 from __future__ import annotations
 
 from aac.engine.engine import AutocompleteEngine
@@ -32,7 +33,9 @@ def run(
     - No scoring logic lives here
     - Output is intentionally human-readable
     """
-    explanations = engine.explain(text)[:limit]
+    explanations = engine.explain(text)
+    if limit is not None:
+        explanations = explanations[:limit]
 
     if not explanations:
         print("(no suggestions for this input)")

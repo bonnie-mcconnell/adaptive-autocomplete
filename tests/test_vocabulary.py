@@ -120,15 +120,15 @@ class TestVocabularyFromFile:
     def test_text_format(self, tmp_path: Path) -> None:
         f = tmp_path / "corpus.txt"
         f.write_text("hello hello world")
-        vocab = vocabulary_from_file(f, format="text")
+        vocab = vocabulary_from_file(f, fmt="text")
         assert vocab["hello"] == 2
         assert vocab["world"] == 1
 
     def test_rejects_unknown_format(self, tmp_path: Path) -> None:
         f = tmp_path / "words.txt"
         f.write_text("hello\n")
-        with pytest.raises(ValueError, match="Unknown format"):
-            vocabulary_from_file(f, format="csv")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="Unknown fmt"):
+            vocabulary_from_file(f, fmt="csv")
 
     def test_passes_kwargs_to_underlying(self, tmp_path: Path) -> None:
         f = tmp_path / "words.txt"

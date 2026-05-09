@@ -1,3 +1,5 @@
+"""ScoreRanker: sort suggestions by descending score. The default final ranking step."""
+
 from collections.abc import Sequence
 
 from aac.domain.types import ScoredSuggestion

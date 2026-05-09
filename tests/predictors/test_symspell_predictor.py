@@ -515,3 +515,72 @@ class TestScoring:
         # Closer distances must have higher confidence
         if "hello" in by_word and "hxllo" in by_word:
             assert by_word["hello"].confidence >= by_word["hxllo"].confidence
+
+
+class TestAdaptiveSymSpellExactMatchExclusion:
+    """
+    Regression tests for the exact-match bug that was reintroduced during
+    the ruff/mypy cleanup on the git version.
+
+    AdaptiveSymSpellPredictor previously had a block that explicitly inserted
+    the prefix as a top-scoring result if it existed in the delete map.
+    This caused low-frequency words like 'programing' (not even in the corpus)
+    to appear as the top suggestion for their own query, burying high-frequency
+    completions like 'programming'.
+
+    These tests must never be removed or weakened.
+    """
+
+    def test_exact_match_not_in_adaptive_results(self) -> None:
+        """AdaptiveSymSpellPredictor must never return word == prefix."""
+        from aac.predictors.adaptive_symspell import AdaptiveSymSpellPredictor
+
+        vocab = ["hello", "help", "hero", "her", "here",
+                 "program", "programming", "progress"]
+        p = AdaptiveSymSpellPredictor(vocab, max_distance=2, short_prefix_len=4)
+
+        for query in ["hello", "prog", "help", "her"]:
+            results = {s.suggestion.value for s in p.predict(query)}
+            assert query not in results, (
+                f"AdaptiveSymSpellPredictor returned the query {query!r} as a "
+                f"suggestion for itself. This is the exact-match regression: "
+                f"the old predict() method injected prefix at score=max(1.0,...) "
+                f"which caused it to appear as the top result."
+            )
+
+    def test_production_preset_programing_recovers_programming(self) -> None:
+        """
+        End-to-end regression test for the production preset.
+
+        'programing' (one n) must recover 'programming' at rank 1.
+        Before the fix, 'programing' would appear as rank 1 via
+        AdaptiveSymSpellPredictor's exact-match injection, even though
+        'programing' is not in the corpus.
+        """
+        from aac.presets import create_engine
+
+        engine = create_engine("production")
+        results = engine.suggest("programing", limit=5)
+        assert "programing" not in results, (
+            f"'programing' appeared in its own results: {results}. "
+            f"This is the AdaptiveSymSpellPredictor exact-match regression."
+        )
+        assert results and results[0] == "programming", (
+            f"Expected 'programming' at rank 1, got: {results[:3]}"
+        )
+
+    def test_production_preset_prog_surfaces_program_not_self(self) -> None:
+        """
+        'prog' must surface 'program', 'programs', 'progress' - not 'prog' itself.
+        """
+        from aac.presets import create_engine
+
+        engine = create_engine("production")
+        results = engine.suggest("prog", limit=10)
+        assert "prog" not in results, (
+            f"'prog' appeared in its own results: {results[:5]}. "
+            f"AdaptiveSymSpellPredictor exact-match regression."
+        )
+        assert "program" in results[:3], (
+            f"Expected 'program' in top 3, got: {results[:3]}"
+        )

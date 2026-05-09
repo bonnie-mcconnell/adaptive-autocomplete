@@ -1,3 +1,4 @@
+"""Ranker protocol: any class implementing rank(prefix, suggestions) -> suggestions satisfies it."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

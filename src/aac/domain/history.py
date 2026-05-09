@@ -1,3 +1,4 @@
+"""Append-only selection history: records (prefix, value, timestamp) triples and exposes prefix-keyed counts."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -247,6 +248,13 @@ class History:
 
             {"<prefix>": {"<value>": count}}
         """
+        import warnings
+        warnings.warn(
+            "History.snapshot() is deprecated and will be removed in a future version. "
+            "Use snapshot_counts() for inspection, or JsonHistoryStore.save() for persistence.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.snapshot_counts()
 
     def snapshot_counts(self) -> dict[str, dict[str, int]]:
@@ -272,6 +280,28 @@ class History:
             for prefix, values in snapshot.items()
         }
 
+    def __repr__(self) -> str:
+        """Return a diagnostic summary showing entry count and prefix count.
+
+        Useful during debugging sessions when inspecting ``engine.history``
+        or a standalone ``History`` instance.  The format is intentionally
+        concise so it fits on one line in a REPL or trace log.
+
+        Example::
+
+            >>> h = History()
+            >>> h.record("prog", "programming")
+            >>> h.record("prog", "program")
+            >>> h.record("hel", "hello")
+            >>> repr(h)
+            "History(entries=3, prefixes=2)"
+        """
+        return (
+            f"History("
+            f"entries={len(self._entries)}, "
+            f"prefixes={len(self._by_prefix)})"
+        )
+
     def copy(self) -> History:
         """
         Return an independent deep copy of this History instance.
@@ -280,14 +310,14 @@ class History:
         shares no mutable state - modifications to either (via ``record()``)
         do not affect the other.
 
-        Used by ``compare_presets()`` to give each preset engine its own
-        isolated History snapshot so that concurrent or sequential engine
-        operations cannot corrupt each other's state.
+        Uses ``record()`` for each entry so that any validation or secondary
+        index logic in ``record()`` is applied consistently. Direct manipulation
+        of ``_entries`` and ``_by_prefix`` would bypass future changes to
+        ``record()`` and silently diverge.
 
         O(n) in the number of history entries.
         """
         new_history = History()
         for entry in self._entries:
-            new_history._entries.append(entry)
-            new_history._by_prefix[entry.prefix].append(entry)
+            new_history.record(entry.prefix, entry.value, timestamp=entry.timestamp)
         return new_history

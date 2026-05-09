@@ -1,3 +1,4 @@
+"""StaticPrefixPredictor: simple dict-based prefix lookup. Fastest predictor, no fuzzy matching."""
 from __future__ import annotations
 
 from collections.abc import Iterable

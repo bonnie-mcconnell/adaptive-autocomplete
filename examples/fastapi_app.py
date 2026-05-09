@@ -14,6 +14,7 @@ Run:
 Endpoints:
     GET /suggest?q=prog&limit=10     → ["programming", "program", ...]
     GET /explain?q=prog&limit=5      → [{value, base, boost, final}, ...]
+    GET /batch?q=prog&q=hel&q=wor   → {"prog": [...], "hel": [...], "wor": [...]}
     POST /record?q=prog&value=programming  → {"recorded": true}
     GET /health                       → {"status": "ok", "history_entries": N}
 
@@ -39,7 +40,7 @@ except ImportError as e:  # pragma: no cover
         "Install it with: pip install fastapi uvicorn"
     ) from e
 
-from aac import ThreadSafeHistory
+from aac import ThreadSafeHistory, __version__ as _aac_version
 from aac.engine.engine import AutocompleteEngine
 from aac.presets import create_engine
 from aac.storage.json_store import JsonHistoryStore
@@ -89,7 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     vocabulary = None
     if VOCAB_PATH:
         from aac.vocabulary import vocabulary_from_file
-        vocabulary = vocabulary_from_file(VOCAB_PATH, format=VOCAB_FORMAT)  # type: ignore[arg-type]
+        vocabulary = vocabulary_from_file(VOCAB_PATH, fmt=VOCAB_FORMAT)
         print(f"adaptive-autocomplete: loaded {len(vocabulary)} words from {VOCAB_PATH}")
 
     # ThreadSafeHistory wraps a loaded History for concurrent record() calls
@@ -115,9 +116,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="adaptive-autocomplete",
     description="Autocomplete API with learning and explainability",
-    version="1.0.0",
+    version=_aac_version,
     lifespan=lifespan,
 )
+
+
+@app.get("/batch")
+async def batch(
+    q: list[str] = Query(..., description="List of prefixes to complete"),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=100, description="Max suggestions per prefix"),
+) -> dict[str, list[str]]:
+    """
+    Return suggestions for multiple prefixes in one request.
+
+    Runs all queries concurrently via the async thread pool so total
+    latency is the max of individual query latencies, not the sum.
+
+    Example: GET /batch?q=prog&q=hel&q=wor&limit=5
+    → {"prog": ["programming", ...], "hel": ["help", ...], "wor": ["word", ...]}
+    """
+    engine = get_engine()
+    return await engine.batch_suggest_async(q, limit=limit)
 
 
 @app.get("/suggest", response_model=list[str])
@@ -142,24 +161,25 @@ async def suggest(
 async def explain(
     q: str = Query(..., min_length=1, description="Input prefix to explain"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=100, description="Max suggestions"),
-) -> list[dict[str, float | str]]:
+) -> list[dict[str, object]]:
     """
     Return per-suggestion score breakdowns.
 
     Shows how base frequency score and recency/history boost combine
-    into the final ranking score for each suggestion.
+    into the final ranking score for each suggestion, with per-predictor
+    component breakdown and percentage contribution.
+
+    Returns the full schema from ``engine.explain_as_dicts()``:
+    ``value``, ``base_score``, ``history_boost``, ``final_score``,
+    ``source``, ``sources``, ``base_components``, ``history_components``,
+    ``contribution_pct``.
     """
     engine = get_engine()
-    explanations = await engine.explain_async(q)
-    return [
-        {
-            "value": e.value,
-            "base": round(e.base_score, 4),
-            "boost": round(e.history_boost, 4),
-            "final": round(e.final_score, 4),
-        }
-        for e in explanations[:limit]
-    ]
+    # explain_as_dicts() is synchronous. Run in a thread to avoid blocking
+    # the event loop, consistent with the engine's async API pattern.
+    import asyncio
+    results = await asyncio.to_thread(engine.explain_as_dicts, q)
+    return results[:limit]
 
 
 @app.post("/record")

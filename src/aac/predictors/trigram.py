@@ -51,7 +51,6 @@ Gravano et al. (2001). "Approximate String Joins in a Database
 """
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
@@ -63,6 +62,7 @@ from aac.domain.types import (
     Suggestion,
     ensure_context,
 )
+from aac.predictors._scoring import build_freq_scores, distance_score, edit_confidence
 from aac.predictors.bk_tree import levenshtein
 
 # Minimum query length below which trigram pre-filtering gives
@@ -113,8 +113,11 @@ class TrigramIndex:
         """
         Return (word, distance) pairs within max_distance of query.
 
-        Returns [] if len(query) < _MIN_PREFIX_LENGTH - trigrams provide
-        weak discrimination for short strings.
+        Returns an empty list if ``len(query) < _MIN_PREFIX_LENGTH`` (currently
+        4). Trigrams provide weak discrimination for short strings - the
+        candidate shortlist approaches the full vocabulary and the Levenshtein
+        step dominates. For short-prefix typo recovery, use SymSpellPredictor
+        or AdaptiveSymSpellPredictor instead.
         """
         if len(query) < _MIN_PREFIX_LENGTH:
             return []
@@ -168,11 +171,12 @@ class TrigramPredictor(Predictor):
 
     Scoring:
         Primary: 1.0 / (1 + distance) - closer matches score higher.
-        Secondary (when frequencies provided): a log-scaled frequency bonus
-        capped at 10% of the minimum distance score breaks ties between
-        equal-distance matches. Distance always dominates; frequency only
-        separates words at the same edit distance. Score matches
-        EditDistancePredictor's scale so the two are interchangeable.
+        Secondary (when frequencies provided): a log-scaled frequency
+        multiplier within each distance bucket. A maximally frequent word
+        scores 1.5× a zero-frequency word at the same distance. Distance
+        always dominates across buckets. See ``aac.predictors._scoring``
+        for the full formula and rationale. Score matches SymSpellPredictor
+        and EditDistancePredictor's scale so the three are interchangeable.
     """
 
     name = "trigram"
@@ -188,27 +192,9 @@ class TrigramPredictor(Predictor):
         self._index = TrigramIndex(vocabulary)
         self._max_distance = max_distance
         self._base_score = base_score
-        # Pre-compute log-normalised frequency scores for ranking within
-        # equal-distance groups.
-        #
-        # Scoring formula: score = base_score / (1 + distance) * (1 + FREQ_WEIGHT * freq_score)
-        #
-        # The old additive formula capped frequency at 10% of the minimum
-        # distance score, making frequency nearly invisible in practice.
-        # The multiplicative formula gives frequency real power within each
-        # distance bucket while keeping distance strictly dominant across
-        # buckets (see SymSpellPredictor for full derivation).
-        _FREQ_WEIGHT = 0.5
-
-        if frequencies:
-            max_freq = max(frequencies.values()) or 1
-            self._freq_score: dict[str, float] = {
-                w: math.log1p(f) / math.log1p(max_freq)
-                for w, f in frequencies.items()
-            }
-        else:
-            self._freq_score = {}
-        self._freq_weight = _FREQ_WEIGHT
+        # Pre-computed log-normalised frequency scores.
+        # Formula and FREQ_WEIGHT rationale: see aac.predictors._scoring
+        self._freq_scores: dict[str, float] = build_freq_scores(frequencies)
 
     def predict(self, ctx: CompletionContext | str) -> list[ScoredSuggestion]:
         ctx = ensure_context(ctx)
@@ -227,10 +213,9 @@ class TrigramPredictor(Predictor):
             if word == prefix:
                 continue
 
-            freq_score = self._freq_score.get(word, 0.0)
-            distance_score = self._base_score / (1 + distance)
-            score = distance_score * (1.0 + self._freq_weight * freq_score)
-            confidence = max(0.0, 1.0 - (distance / (self._max_distance + 1)))
+            freq_score = self._freq_scores.get(word, 0.0)
+            score = distance_score(self._base_score, distance, freq_score)
+            confidence = edit_confidence(distance, self._max_distance)
 
             results.append(
                 ScoredSuggestion(

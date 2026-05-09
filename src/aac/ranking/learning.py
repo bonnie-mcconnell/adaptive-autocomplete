@@ -1,3 +1,4 @@
+"""LearningRanker: boosts suggestions with high selection history above their base frequency score."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -122,6 +123,29 @@ class LearningRanker(Ranker, LearnsFromHistory):
         )
         return base_score + boost
 
+    def _sort_key(
+        self,
+        s: ScoredSuggestion,
+        index: int,
+        counts: dict[str, int],
+    ) -> tuple[float, int]:
+        """
+        Canonical sort key: (descending final_score, ascending original_index).
+
+        Extracted so rank() and explain() use an identical key function.
+        If the sorting logic ever changes, it changes in one place, and the
+        two methods remain guaranteed to agree on ordering.
+
+        Returns a tuple where the first element is negated (sort ascending
+        on a negative = sort descending on a positive).
+        """
+        final_score = self._compute_adjusted_score(
+            value=s.suggestion.value,
+            base_score=s.score,
+            counts=counts,
+        )
+        return (-final_score, index)
+
     # --- ranking ---
 
     def rank(
@@ -161,8 +185,9 @@ class LearningRanker(Ranker, LearnsFromHistory):
             )
             scored.append((final_score, index, boosted))
 
-        # Stable: score desc, original index as tiebreaker
-        scored.sort(key=lambda t: (-t[0], t[1]))
+        # Stable: use _sort_key to share the exact sort contract with explain().
+        # _sort_key returns (-final_score, index); sort ascending on that tuple.
+        scored.sort(key=lambda t: self._sort_key(t[2], t[1], counts))
 
         return [suggestion for _, _, suggestion in scored]
 
@@ -186,20 +211,20 @@ class LearningRanker(Ranker, LearnsFromHistory):
         # and re-sort the same suggestions a second time.
         counts = self._counts(prefix)
 
-        # Produce explanations in the same order rank() would produce them.
-        # We replicate the sort key rather than calling rank() to avoid the
-        # cache invalidation and the extra allocation of a fully boosted list.
-        def _final_score(s: ScoredSuggestion) -> float:
-            count = counts.get(s.suggestion.value, 0)
-            boost = self._compute_history_boost(
-                count=count,
-                base_score=pre_boost_scores[s.suggestion.value],
-            )
-            return pre_boost_scores[s.suggestion.value] + boost
-
+        # Produce explanations in the same order rank() produces them.
+        # Using _sort_key() here guarantees that any change to rank()'s
+        # sort logic is automatically reflected in explain() - they share
+        # exactly one definition of the ordering.
+        #
+        # We must sort on the PRE-BOOST scores from pre_boost_scores, not
+        # on suggestion.score (which in the engine pipeline has already had
+        # a ranker's score applied). _sort_key() calls _compute_adjusted_score()
+        # which uses suggestion.score as base_score; so we pass suggestions
+        # as-is from the pre-ranking input, where suggestion.score IS the
+        # pre-boost base score.
         ordered = sorted(
             enumerate(suggestions),
-            key=lambda t: (-_final_score(t[1]), t[0]),
+            key=lambda t: self._sort_key(t[1], t[0], counts),
         )
 
         explanations: list[RankingExplanation] = []
@@ -229,20 +254,8 @@ class LearningRanker(Ranker, LearnsFromHistory):
 
         return explanations
 
-    def explain_as_dicts(
-        self,
-        prefix: str,
-        suggestions: Sequence[ScoredSuggestion],
-    ) -> list[dict[str, float | str]]:
-        """
-        Export ranking explanations in a JSON-safe schema.
-        """
-        return [
-            {
-                "value": e.value,
-                "base_score": e.base_score,
-                "history_boost": e.history_boost,
-                "final_score": e.final_score,
-            }
-            for e in self.explain(prefix, suggestions)
-        ]
+    # explain_as_dicts() is intentionally absent from this class.
+    # The engine's explain_as_dicts() produces the full schema
+    # (base_components, history_components, contribution_pct) by merging
+    # all ranker explanations. A partial version here would give callers
+    # an inconsistent, schema-incomplete result alongside the engine output.

@@ -1,3 +1,4 @@
+"""DecayRanker: applies exponential time-decay to selection counts. Recent selections rank higher."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -84,6 +85,10 @@ class DecayRanker(Ranker, LearnsFromHistory):
         self._cached_now: datetime | None = None
         self._cached_counts: dict[str, float] = {}
         self._cache_valid: bool = False
+        # _rank_now stores the timestamp used in the most recent rank() call.
+        # explain() reads this to reuse the exact same now, guaranteeing a
+        # cache hit and avoiding a second O(k) history scan.
+        self._rank_now: datetime | None = None
 
     def _now_utc(self) -> datetime:
         return self._now if self._now is not None else utcnow()
@@ -127,6 +132,7 @@ class DecayRanker(Ranker, LearnsFromHistory):
         # the result so explain() can reuse it without a second scan.
         self._cache_valid = False
         now = self._now_utc()
+        self._rank_now = now  # stored so explain() reuses the exact same timestamp
         decayed = self._decayed_counts(prefix, now)
         if not decayed:
             return list(suggestions)
@@ -167,10 +173,12 @@ class DecayRanker(Ranker, LearnsFromHistory):
         prefix: str,
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[RankingExplanation]:
-        # Reuse the cached decayed counts from the rank() call that the engine
-        # made immediately before this explain() call.  If the cache misses
-        # (e.g. explain() called standalone), recompute.
-        now = self._now_utc()
+        # Reuse _rank_now so explain() hits the cache that rank() populated.
+        # Calling _now_utc() here would produce a microsecond-different timestamp,
+        # which would always miss the cache and trigger a redundant O(k) history scan.
+        # If explain() is called without a prior rank() (standalone use), fall back
+        # to the current time - cache will miss and recompute, which is correct.
+        now = self._rank_now if self._rank_now is not None else self._now_utc()
         decayed = self._decayed_counts(prefix, now)
 
         explanations: list[RankingExplanation] = []

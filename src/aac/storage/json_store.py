@@ -1,3 +1,4 @@
+"""JsonHistoryStore: persists History to a JSON file. Thread-safe with atomic rename-on-write."""
 from __future__ import annotations
 
 import json
