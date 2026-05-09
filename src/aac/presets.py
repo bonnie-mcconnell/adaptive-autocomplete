@@ -7,6 +7,7 @@ from typing import TypeAlias
 
 from aac.data import load_english_frequencies
 from aac.domain.history import History
+from aac.domain.thread_safe_history import ThreadSafeHistory
 from aac.domain.types import WeightedPredictor
 from aac.engine.engine import AutocompleteEngine
 from aac.predictors.adaptive_symspell import AdaptiveSymSpellPredictor
@@ -110,7 +111,9 @@ def _default_engine(
         After a few selections the history signal dominates, which is the
         intended behaviour.
     """
-    history = history or History()
+    # Production engines are likely used in concurrent server environments.
+    # Use a ThreadSafeHistory by default when the caller does not supply one.
+    history = history or ThreadSafeHistory()
     frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
@@ -510,11 +513,8 @@ class PresetComparison:
     """
     Side-by-side explanation comparison across multiple presets for a query.
 
-    This is the API that makes the ``explain()`` feature actionable beyond
-    a single engine instance.  If you are running ``production`` and want to
-    know whether switching to ``robust`` would change your top-5 for a given
-    prefix, call ``compare_presets()`` and inspect the component scores
-    side-by-side.  No manual engine construction or result zipping required.
+    Side-by-side explanation data across multiple presets for one query.
+    See ``compare_presets()`` to build one.
 
     Attributes:
         text:     The query prefix that was compared.
@@ -665,10 +665,8 @@ def compare_presets(
     ``PresetComparison`` with side-by-side scores for every suggestion that
     appears in any preset's results.
 
-    This is the primary tool for answering questions like:
-      - "Would switching from ``default`` to ``production`` change my top-5?"
-      - "How much is the DecayRanker boosting 'hello' vs the base frequency score?"
-      - "Which preset surfaces 'receive' for the typo 'recieve'?"
+    Useful for questions like: "Would switching to ``production`` change my
+    top-5?" or "Which preset surfaces 'receive' for the typo 'recieve'?"
 
     Parameters:
         text:       The query prefix to compare.
