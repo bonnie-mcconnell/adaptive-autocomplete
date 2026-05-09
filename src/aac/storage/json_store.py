@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,10 +39,9 @@ class JsonHistoryStore(HistoryStore):
 
     Migration:
         Version 1 files (the old count-only format) are loaded with
-        timestamps set to the Unix epoch. This means all migrated
-        entries are treated as maximally stale by decay-based rankers -
-        they contribute counts but carry no recency signal. This is the
-        safest migration: old data can only boost, never mislead.
+        timestamps set to the Unix epoch, so decay-based rankers treat
+        migrated entries as maximally stale. They contribute counts but
+        carry no recency signal - the safest possible migration.
 
     Design notes:
         - Domain objects remain I/O-free; all serialisation lives here.
@@ -122,7 +122,19 @@ class JsonHistoryStore(HistoryStore):
                 fd_owned_by_file = True   # f now owns fd; closing f closes it
                 f.write(content)
             # Atomic replace: old file visible until new file is complete.
-            Path(tmp_path_str).replace(self._path)
+            # On Windows Path.replace() can be implemented as delete-then-rename
+            # which creates a tiny window where the destination may be missing.
+            # Retry a few times to reduce the chance of a transient failure
+            # (e.g. antivirus or file-lock races) causing an irrevocable state.
+            tmp_path = Path(tmp_path_str)
+            for attempt in range(3):
+                try:
+                    tmp_path.replace(self._path)
+                    break
+                except OSError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.05)
         except Exception:
             if not fd_owned_by_file:
                 # fdopen raised before taking ownership - close the raw fd
