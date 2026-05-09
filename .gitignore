@@ -19,3 +19,4 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .hypothesis/
+.coverage*
