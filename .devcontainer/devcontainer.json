@@ -1,0 +1,34 @@
+{
+  "name": "adaptive-autocomplete",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bullseye",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "pip install pipx --quiet && pipx install poetry && poetry install",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.mypy-type-checker",
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        },
+        "mypy-type-checker.args": ["--strict"],
+        "ruff.args": ["--config", "pyproject.toml"]
+      }
+    }
+  },
+  "forwardPorts": [5000],
+  "portsAttributes": {
+    "5000": {
+      "label": "Demo server",
+      "onAutoForward": "openBrowser"
+    }
+  }
+}
