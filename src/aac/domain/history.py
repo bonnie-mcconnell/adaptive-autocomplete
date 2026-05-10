@@ -47,14 +47,11 @@ class History:
         - Persistence-friendly via explicit snapshot export
 
     Thread safety:
-        This class is **not thread-safe**.  Concurrent ``record()`` calls
-        from multiple threads will produce interleaved writes with no
-        consistency guarantee.  The docstring note "safe to share across
-        predictors and rankers" refers to read access only: because entries
-        are never mutated or deleted, concurrent reads are safe.  For
-        multi-threaded write access, protect ``record()`` externally with a
-        ``threading.Lock``, or use one ``History`` instance per thread and
-        merge snapshots periodically.
+        Not thread-safe. Concurrent ``record()`` calls from multiple threads
+        risk data races on the internal entry list and prefix index. The note
+        "safe to share across predictors and rankers" means read-only sharing:
+        entries are never mutated or deleted after insertion, so concurrent
+        reads are safe. For concurrent writes, use ``ThreadSafeHistory``.
 
     Domain representation (HistoryEntry) is kept separate from
     serialised representation (snapshot) so storage is replaceable.

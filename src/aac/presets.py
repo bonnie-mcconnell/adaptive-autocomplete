@@ -3,11 +3,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TypeAlias, cast
+from typing import TypeAlias
 
 from aac.data import load_english_frequencies
 from aac.domain.history import History
-from aac.domain.thread_safe_history import ThreadSafeHistory
 from aac.domain.types import WeightedPredictor
 from aac.engine.engine import AutocompleteEngine
 from aac.predictors.adaptive_symspell import AdaptiveSymSpellPredictor
@@ -111,9 +110,7 @@ def _default_engine(
         After a few selections the history signal dominates, which is the
         intended behaviour.
     """
-    # Production engines are likely used in concurrent server environments.
-    # Use a ThreadSafeHistory by default when the caller does not supply one.
-    history = history or ThreadSafeHistory()
+    history = history or History()
     frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
@@ -203,7 +200,7 @@ def _robust_engine(
 
     Weight rationale:
         All predictors emit log-normalised scores in (0, 1].
-        SymSpellPredictor(weight=0.4): intentionally weak - it fires on
+        SymSpellPredictor(weight=0.4): weight kept low - it fires on
         every prefix (including exact matches) and would swamp the frequency
         signal if given a high weight.  0.4 means a perfect typo-corrected
         match contributes 0.4 to the combined score, enough to promote a
@@ -321,7 +318,7 @@ def _production_engine(
     Weight rationale:
         FrequencyPredictor(weight=1.0) and HistoryPredictor(weight=1.2) set
         the base signal. SymSpellPredictor(weight=0.35) and
-        TrigramPredictor(weight=0.4) are intentionally weak - they are typo
+        TrigramPredictor(weight=0.4) are kept low - they are typo
         recovery signals, not primary ranking signals. At short prefixes,
         SymSpell provides the only typo signal and its 0.35 weight is enough
         to surface a corrected word above a low-frequency exact match.
@@ -457,21 +454,31 @@ def create_engine(
     preset: str,
     vocabulary: Mapping[str, int] | None = None,
     history: History | None = None,
+    *,
+    thread_safe: bool = False,
 ) -> AutocompleteEngine:
     """
     Build an engine from a named preset with the bundled vocabulary.
 
     Parameters:
-        preset:     Name of the preset (see ``available_presets()``).
-        vocabulary: Custom word-frequency mapping.  If omitted, the bundled
-                    48 k-word English corpus is used.
-        history:    Existing ``History`` instance to attach for learning and
-                    persistence.  Pass the result of
-                    ``JsonHistoryStore(path).load()`` here so the engine reads
-                    and writes the same history that will be saved to disk.
-                    If omitted, a fresh in-memory history is created.
+        preset:      Name of the preset (see ``available_presets()``).
+        vocabulary:  Custom word-frequency mapping.  If omitted, the bundled
+                     48 k-word English corpus is used.
+        history:     Existing ``History`` instance to attach for learning and
+                     persistence.  Pass the result of
+                     ``JsonHistoryStore(path).load()`` here so the engine reads
+                     and writes the same history that will be saved to disk.
+                     If omitted, a fresh in-memory ``History`` is created.
+        thread_safe: If ``True``, wraps the history in ``ThreadSafeHistory``
+                     before building the engine.  Required when
+                     ``record_selection()`` and ``suggest()`` are called from
+                     multiple threads simultaneously (e.g. a multi-threaded
+                     WSGI server or a FastAPI app with a thread-pool executor).
+                     Has no effect if ``history`` is already a
+                     ``ThreadSafeHistory``.  Default: ``False`` - plain
+                     ``History`` is sufficient for single-threaded use.
 
-    Example - persistent engine across restarts::
+    Example - single-threaded persistent engine::
 
         from aac.presets import create_engine
         from aac.storage.json_store import JsonHistoryStore
@@ -480,10 +487,24 @@ def create_engine(
         store = JsonHistoryStore(Path("~/.aac_history.json").expanduser())
         engine = create_engine("production", history=store.load())
 
-        suggestions = engine.suggest("prog")
-        engine.record_selection("prog", suggestions[0])
-        store.save(engine.history)   # persist learning to disk
+        engine.record_selection("prog", engine.suggest("prog")[0])
+        store.save(engine.history)
+
+    Example - multi-threaded server (FastAPI, Flask, Gunicorn)::
+
+        store = JsonHistoryStore(Path("~/.aac_history.json").expanduser())
+        engine = create_engine(
+            "production",
+            history=store.load(),
+            thread_safe=True,
+        )
+        # engine.history is now ThreadSafeHistory; safe from any thread.
     """
+    from aac.domain.thread_safe_history import ThreadSafeHistory
+
+    if thread_safe and not isinstance(history, ThreadSafeHistory):
+        history = ThreadSafeHistory(history)
+
     return get_preset(preset).build(history, vocabulary)
 
 
@@ -511,8 +532,6 @@ def describe_presets() -> str:
 
 class PresetComparison:
     """
-    Side-by-side explanation comparison across multiple presets for a query.
-
     Side-by-side explanation data across multiple presets for one query.
     See ``compare_presets()`` to build one.
 
@@ -581,12 +600,13 @@ class PresetComparison:
         lines = [header, sub_header, separator]
         for row in rows:
             parts = [f"{row['value']:<{val_w}}"]
-            # row structure is guaranteed by compare_presets() above.
-            # Narrow the generic object types to concrete dicts for mypy.
-            ranks = cast(dict[str, int | None], row["ranks"])
-            bases = cast(dict[str, float | None], row["base_scores"])
-            boosts = cast(dict[str, float | None], row["boosts"])
-            finals = cast(dict[str, float | None], row["finals"])
+            # row structure is guaranteed by compare_presets() above:
+            # {"value": str, "ranks": dict, "base_scores": dict, ...}
+            # cast avoids type: ignore while staying explicit about assumptions.
+            ranks = row["ranks"]
+            bases = row["base_scores"]
+            boosts = row["boosts"]
+            finals = row["finals"]
             for p in self.presets:
                 rank = ranks.get(p)
                 base = bases.get(p)
@@ -736,7 +756,7 @@ def compare_presets(
     all_values = list(seen)
 
     # Build lookup: preset -> {value: (rank, explanation)}
-    lookup: dict[str, dict[str, tuple[int, RankingExplanation]]] = {}
+    lookup: dict[str, dict[str, tuple[int, object]]] = {}
     for name in preset_names:
         lookup[name] = {
             exp.value: (i + 1, exp)

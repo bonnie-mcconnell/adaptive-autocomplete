@@ -290,7 +290,7 @@ class AutocompleteEngine:
                    avoids constructing the full list when only the top-N
                    are needed.
 
-        Scores and explanations are intentionally hidden.
+        Scores and explanations are not in the return type.
         Use explain() or predict_scored() for introspection.
         """
         ctx = CompletionContext(text)
@@ -602,21 +602,17 @@ class AutocompleteEngine:
         Each suggestion is paired with a confidence value in (0, 1] where
         1.0 means the top-ranked candidate.
 
-        **Normalisation design:**
+        Normalisation:
 
         Raw score division (score / top_score) becomes misleading when
-        history learning creates large score gaps - e.g. after 5 selections,
-        the top result may score 9.1 while the second scores 0.57, giving
-        the second a 6% confidence even though it's an excellent match.
+        history learning creates large score gaps. After 5 selections, the
+        top result may score 9.1 while the second scores 0.57, giving the
+        second a 6% confidence even though it's a strong match.
 
-        This method uses a hybrid approach:
-          - If the top score dominates by more than ``_DOMINANCE_THRESHOLD`` (4×),
-            rank-based weighting is applied: position k gets
-            ``1 / (1 + k * _RANK_DECAY_RATE)``, capped at 1.0.
-            A heavily-selected word is the right answer; rank-based weighting
-            preserves meaningful separation for the remaining alternatives.
-          - If scores are in a normal range (no strong dominance), raw
-            normalised scores are used - they're meaningful and stable.
+        Switch point: if the top candidate outscores the second by more than
+        ``_DOMINANCE_THRESHOLD`` (4×), use rank-based weighting -
+        position k gets ``1 / (1 + k * _RANK_DECAY_RATE)``. Below that
+        threshold, raw normalised scores are meaningful and stable.
 
         Parameters:
             text:  The input prefix to complete.
