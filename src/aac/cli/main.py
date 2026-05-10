@@ -8,6 +8,7 @@ from pathlib import Path
 
 from aac.cli import debug, demo, explain, history, record, suggest
 from aac.cli.app import build_engine
+from aac.engine.engine import AutocompleteEngine
 from aac.presets import PRESETS, available_presets, compare_presets, describe_presets
 from aac.storage.json_store import JsonHistoryStore
 
@@ -26,17 +27,6 @@ def _add_preset_arg(p: argparse.ArgumentParser) -> None:
     """Add --preset to a subcommand parser (standard position: after subcommand)."""
     p.add_argument(
         "--preset",
-        default="production",
-        choices=available_presets(),
-        help=_PRESET_HELP,
-    )
-
-
-def _add_global_preset_arg(p: argparse.ArgumentParser) -> None:
-    """Add --preset at the top level so callers can place it before the subcommand."""
-    p.add_argument(
-        "--preset",
-        dest="preset_global",
         default="production",
         choices=available_presets(),
         help=_PRESET_HELP,
@@ -108,7 +98,6 @@ def main() -> None:
         dest="history_path_global",
         help=f"Path to persisted history file (default: {DEFAULT_HISTORY_PATH})",
     )
-    _add_global_preset_arg(parser)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -401,19 +390,10 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Resolve preset/history_path:
-    # - global flags win when supplied before the subcommand
-    # - subcommand-local flags still work when provided after the subcommand
-    if getattr(args, "preset_global", None) is not None:
-        if not hasattr(args, "preset") or args.preset == "production":
-            args.preset = args.preset_global
-
-    # Resolve history_path:
-    # - subcommand-local --history-path wins when explicitly supplied after the subcommand
-    # - otherwise the global --history-path applies, so `aac --history-path /path record ...` works
-    if getattr(args, "history_path_global", None) is not None:
-        if not hasattr(args, "history_path") or args.history_path == DEFAULT_HISTORY_PATH:
-            args.history_path = args.history_path_global
+    # Resolve history_path: subcommand-local --history-path wins; global fallback
+    # lets users write `aac --history-path /path record he hello` (global form).
+    if not hasattr(args, "history_path"):
+        args.history_path = args.history_path_global
 
     try:
         _run(args)
@@ -430,7 +410,7 @@ def _load_vocabulary(args: argparse.Namespace) -> dict[str, int] | None:
         return None
     from aac.vocabulary import vocabulary_from_file
     try:
-        vocab = vocabulary_from_file(vocab_path, fmt=getattr(args, "vocab_format", "wordlist"))
+        vocab = vocabulary_from_file(vocab_path, format=getattr(args, "vocab_format", "wordlist"))
     except FileNotFoundError:
         print(f"aac: error: vocabulary file not found: {vocab_path}", file=sys.stderr)
         sys.exit(1)
@@ -517,10 +497,7 @@ def _run(args: argparse.Namespace) -> None:
         )
 
 
-def _run_suggest(args: argparse.Namespace, engine: object) -> None:
-    from aac.engine.engine import AutocompleteEngine
-    if not isinstance(engine, AutocompleteEngine):
-        raise TypeError(f"Expected AutocompleteEngine, got {type(engine).__name__}")
+def _run_suggest(args: argparse.Namespace, engine: AutocompleteEngine) -> None:
 
     if args.confidence:
         results = engine.suggest_with_confidence(args.text, limit=args.limit)
@@ -544,10 +521,7 @@ def _run_suggest(args: argparse.Namespace, engine: object) -> None:
             suggest.run(engine=engine, text=args.text, limit=args.limit)
 
 
-def _run_explain(args: argparse.Namespace, engine: object) -> None:
-    from aac.engine.engine import AutocompleteEngine
-    if not isinstance(engine, AutocompleteEngine):
-        raise TypeError(f"Expected AutocompleteEngine, got {type(engine).__name__}")
+def _run_explain(args: argparse.Namespace, engine: AutocompleteEngine) -> None:
 
     if args.json:
         dicts = engine.explain_as_dicts(args.text)[:args.limit]
@@ -618,14 +592,11 @@ if __name__ == "__main__":
 
 def _run_eval(
     args: argparse.Namespace,
-    engine: object,
+    engine: AutocompleteEngine,
     store: object,
 ) -> None:
-    from aac.engine.engine import AutocompleteEngine
     from aac.evaluation import EvaluationHarness
     from aac.evaluation.datasets import load_jsonl
-    if not isinstance(engine, AutocompleteEngine):
-        raise TypeError(f"Expected AutocompleteEngine, got {type(engine).__name__}")
 
     if getattr(args, "from_history", False):
         from aac.storage.json_store import JsonHistoryStore
@@ -676,12 +647,9 @@ def _run_eval(
             )
 
 
-def _run_tune(args: argparse.Namespace, engine: object) -> None:
-    from aac.engine.engine import AutocompleteEngine
+def _run_tune(args: argparse.Namespace, engine: AutocompleteEngine) -> None:
     from aac.evaluation import EvaluationHarness, WeightOptimiser
     from aac.evaluation.datasets import load_jsonl
-    if not isinstance(engine, AutocompleteEngine):
-        raise TypeError(f"Expected AutocompleteEngine, got {type(engine).__name__}")
 
     preset = getattr(args, "preset", "production")
 
