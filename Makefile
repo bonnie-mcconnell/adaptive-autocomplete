@@ -1,4 +1,4 @@
-.PHONY: install demo demo-docker warm test test-fast test-perf benchmark benchmark-save benchmark-diff lint typecheck typecheck-examples version-check check all run
+.PHONY: install dev-setup demo demo-docker warm test test-fast test-perf benchmark benchmark-save benchmark-diff lint typecheck typecheck-examples pre-commit version-check check all run
 
 # ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -12,6 +12,17 @@ install:
 	@echo ""
 	@echo "Or prefix any command with 'poetry run', e.g.:"
 	@echo "  poetry run aac suggest he"
+
+# ── Developer setup ──────────────────────────────────────────────────────────
+
+# Install dependencies + pre-commit hooks. Run once after cloning.
+dev-setup: install
+	poetry run pre-commit install
+	@echo "pre-commit hooks installed."
+
+# Run all pre-commit hooks against every file (useful before a PR).
+pre-commit:
+	poetry run pre-commit run --all-files
 
 # ── Run (convenience wrapper so 'aac' works without activating the venv) ────
 
