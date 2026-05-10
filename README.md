@@ -26,16 +26,6 @@ engine.explain("programing")[0]
 
 ---
 
-## What I'd change if I started over
-
-**The `default` preset ignores time.** Raw selection counts don't decay. Something selected 50 times six months ago outweighs something selected twice yesterday. `recency` and `production` fix this with a `DecayRanker`, but the right design bakes time-awareness into the core history model rather than bolting it on as a ranker. I shipped the simple version first and added decay second; it should have been the default.
-
-**Presets obscure composability.** The direct constructor is already the better interface. Presets are convenience wrappers that hide weighting decisions from users who might benefit from tuning them. I shipped presets first because they're easier to explain, but that made the composable API look like the "advanced" option when it should be the default.
-
-**The confidence score formula is a heuristic.** The hybrid approach - raw normalisation below 4× dominance, rank-based weighting above it - produces reasonable output but has no principled statistical basis. A cleaner design would model selection probability directly, something like a contextual bandit. That's a real algorithm; this is a workaround that happens to produce sensible numbers.
-
----
-
 ## How it works
 
 **Prediction and ranking are separate layers.** Predictors are stateless: they take a prefix and return scored candidates. Rankers are stateful: they reorder candidates based on history and recency. The seam exists because the original monolithic function was untestable - writing a learning test required mocking the full prediction pipeline.
@@ -105,7 +95,14 @@ Two strategies: **grid search** (exhaustive, optimal on the grid, practical for 
 
 ## Concurrency
 
-`History` is not thread-safe. For multi-threaded servers, wrap it:
+`History` is not thread-safe. For multi-threaded servers, pass `thread_safe=True`:
+
+```python
+engine = create_engine("production", history=store.load(), thread_safe=True)
+# engine.history is now ThreadSafeHistory - safe from any number of threads.
+```
+
+Or construct `ThreadSafeHistory` directly if you need the reference before building the engine:
 
 ```python
 from aac.domain.thread_safe_history import ThreadSafeHistory
@@ -114,7 +111,7 @@ history = ThreadSafeHistory(store.load())
 engine = create_engine("production", history=history)
 ```
 
-`ThreadSafeHistory` uses a `threading.Condition` for write serialisation and reference-counted readers for read concurrency. Multiple `predict()` calls run simultaneously; `record_selection()` waits for active reads to finish. Does not rely on GIL guarantees - safe on CPython, PyPy, and free-threaded 3.13+.
+`ThreadSafeHistory` uses a `threading.Condition` for write serialisation and reference-counted readers for read concurrency. Multiple `suggest()` calls run simultaneously; `record_selection()` waits for active readers to finish. Does not rely on GIL guarantees - safe on CPython, PyPy, and free-threaded 3.13+.
 
 ---
 
@@ -198,5 +195,7 @@ src/aac/
 
 ## Further reading
 
+- [`DESIGN.md`](DESIGN.md) - architecture decisions, tradeoffs, and what I'd change
+- [`BENCHMARK.md`](BENCHMARK.md) - latency numbers, CI gates, and how to reproduce
 - [`CHANGELOG.md`](CHANGELOG.md) - what changed and why
 - [`examples/`](examples/) - usage examples including async FastAPI integration

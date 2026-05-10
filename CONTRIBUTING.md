@@ -5,7 +5,7 @@
 ```bash
 git clone https://github.com/bonnie-mcconnell/adaptive-autocomplete
 cd adaptive-autocomplete
-make install
+make dev-setup   # installs dependencies + pre-commit hooks (run once)
 
 # Activate the virtualenv to use 'aac' directly:
 source .venv/bin/activate       # Linux/macOS
@@ -23,6 +23,7 @@ make test       # full suite including integration tests (~90s)
 make lint       # ruff check
 make typecheck  # mypy --strict
 make check      # lint + typecheck + full test suite (run before every commit)
+make pre-commit # run all pre-commit hooks against all files
 ```
 
 Integration tests are marked with `@pytest.mark.integration` and invoke the
