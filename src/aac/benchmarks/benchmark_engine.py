@@ -189,10 +189,7 @@ def _diff_against_baseline(
         cur = current.get(label)
         base = baseline.get(label)
         if cur is None:
-            if base is None:
-                print(f"  {label:<40} {'(missing)':>14} {'(missing)':>10}")
-            else:
-                print(f"  {label:<40} {'(missing)':>14} {base['p99']:>10.0f}µs")
+            print(f"  {label:<40} {'(missing)':>14} {cur['p99']:>10.0f}µs")
             continue
         if base is None:
             print(f"  {label:<40} {'(new)':>14} {cur['p99']:>12.0f}µs")
