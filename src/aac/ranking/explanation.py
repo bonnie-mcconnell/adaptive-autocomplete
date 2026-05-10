@@ -86,7 +86,7 @@ class RankingExplanation:
         if self.value != other.value:
             raise ValueError("Cannot merge explanations for different values")
 
-        # NOTE: 'source' intentionally preserved from the first explanation.
+        # 'source' from the first explanation is preserved - the merge
         # Component maps capture multi-ranker contributions.
 
         merged_base = self.base_score + other.base_score

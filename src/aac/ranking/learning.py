@@ -265,7 +265,7 @@ class LearningRanker(Ranker, LearnsFromHistory):
 
         return explanations
 
-    # explain_as_dicts() is intentionally absent from this class.
+    # explain_as_dicts() is not implemented here - call engine.explain()
     # The engine's explain_as_dicts() produces the full schema
     # (base_components, history_components, contribution_pct) by merging
     # all ranker explanations. A partial version here would give callers
