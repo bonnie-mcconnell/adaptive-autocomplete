@@ -94,9 +94,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         vocabulary = vocabulary_from_file(VOCAB_PATH, fmt=VOCAB_FORMAT)
         print(f"adaptive-autocomplete: loaded {len(vocabulary)} words from {VOCAB_PATH}")
 
-    # ThreadSafeHistory wraps a loaded History for concurrent record() calls
-    ts_history = ThreadSafeHistory(_store.load())
-    _engine_instance = create_engine(PRESET, history=ts_history, vocabulary=vocabulary)
+    # thread_safe=True wraps the loaded History in ThreadSafeHistory so that
+    # concurrent suggest() and record_selection() calls from the async thread
+    # pool are safe without external locking.
+    _engine_instance = create_engine(
+        PRESET,
+        history=_store.load(),
+        vocabulary=vocabulary,
+        thread_safe=True,
+    )
+    ts_history = _engine_instance.history  # ThreadSafeHistory instance
 
     print(
         f"adaptive-autocomplete: {PRESET} preset loaded, "
@@ -106,6 +113,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield  # application runs here
 
     # Save on shutdown
+    assert isinstance(ts_history, ThreadSafeHistory)
     _store.save(ts_history.snapshot_history())
     print(f"adaptive-autocomplete: history saved to {HISTORY_PATH}")
 
