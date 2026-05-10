@@ -58,7 +58,7 @@ async def test_concurrent_suggest_async_no_corruption() -> None:
     """
     Many concurrent suggest_async() calls must all return correct results.
 
-    This tests that the engine's internal state is not corrupted by
+    Checks that the engine's internal state is not corrupted by
     concurrent access to the thread pool executor. The synchronous suggest()
     is not thread-safe for writes, but concurrent reads are safe because
     suggest() does not mutate engine state.

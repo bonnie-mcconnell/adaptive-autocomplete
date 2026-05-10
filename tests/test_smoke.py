@@ -169,3 +169,40 @@ def test_readme_recieve_output_matches_actual() -> None:
     assert "receive" in recieve, (
         f"README claims 'receive' appears in top-4 for 'recieve', got: {recieve}"
     )
+
+
+def test_create_engine_thread_safe_flag() -> None:
+    """thread_safe=True wraps history in ThreadSafeHistory before engine construction.
+
+    Without this flag a caller sharing an engine across threads would need to
+    manually construct and pass a ThreadSafeHistory. The flag makes the safe
+    path shorter than the unsafe one for the common multi-threaded server case.
+    """
+    from aac.domain.thread_safe_history import ThreadSafeHistory
+    from aac.presets import create_engine
+
+    engine = create_engine("default", thread_safe=True)
+    assert isinstance(engine.history, ThreadSafeHistory), (
+        f"Expected ThreadSafeHistory, got {type(engine.history).__name__}"
+    )
+
+    # Idempotent: passing an existing ThreadSafeHistory with thread_safe=True
+    # must not double-wrap it.
+    existing = ThreadSafeHistory()
+    engine2 = create_engine("default", history=existing, thread_safe=True)
+    assert engine2.history is existing, (
+        "thread_safe=True must not re-wrap an existing ThreadSafeHistory"
+    )
+
+
+def test_create_engine_thread_safe_false_gives_plain_history() -> None:
+    """Default (thread_safe=False) preserves plain History for single-threaded use."""
+    from aac.domain.history import History
+    from aac.domain.thread_safe_history import ThreadSafeHistory
+    from aac.presets import create_engine
+
+    engine = create_engine("default")
+    assert isinstance(engine.history, History)
+    assert not isinstance(engine.history, ThreadSafeHistory), (
+        "Default create_engine must return plain History, not ThreadSafeHistory"
+    )

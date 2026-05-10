@@ -119,7 +119,7 @@ def test_record_then_suggest_shows_learning(tmp_path: Path) -> None:
 
     'hero' has frequency 479, rank ~25 in 'he' completions. The default
     preset weights HistoryPredictor at 1.5. We record it once, then request
-    --limit 30 to verify it surfaces in the extended result set. This tests
+    --limit 30 to verify it surfaces in the extended result set, exercising
     that the record → persist → reload → score pipeline is working end-to-end
     without relying on a specific rank position.
     """

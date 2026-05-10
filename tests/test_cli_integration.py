@@ -3,7 +3,7 @@ Integration tests for the CLI round-trip.
 
 These tests invoke the CLI as a subprocess so they exercise the full
 stack: argument parsing, engine construction, persistence, and output.
-They are intentionally slow (subprocess overhead).
+Slow by nature - subprocess overhead.
 
 Run only unit tests (fast):
     pytest -m "not integration"

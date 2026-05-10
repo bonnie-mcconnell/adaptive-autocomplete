@@ -2,7 +2,7 @@
 Golden tests for StaticPrefixPredictor.
 
 These tests lock in exact output behaviour. The word "golden" means
-the expected values are pinned intentionally - if they change, it is
+expected values are pinned - if they change, it is
 a deliberate breaking change, not an accident.
 """
 from __future__ import annotations

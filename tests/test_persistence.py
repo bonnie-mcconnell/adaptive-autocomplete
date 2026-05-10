@@ -7,6 +7,7 @@ decay interaction after reload, and error handling.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -341,4 +342,58 @@ class TestJsonStoreExceptionCleanup:
         # os.close must NOT have been called - fdopen owned the fd
         assert close_calls == [], (
             f"os.close should not be called when fdopen succeeded; got calls for fds: {close_calls}"
+        )
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows backup rotation only runs on win32",
+)
+def test_windows_backup_created_before_replace(tmp_path: Path) -> None:
+    """On Windows, save() creates a .bak of the previous file before replacing it.
+
+    The .bak exists between the old file rename and the new file rename. If a
+    crash occurs in that window the previous history is recoverable from .bak.
+    After a successful save, .bak is removed.
+    """
+    from aac.storage.json_store import JsonHistoryStore
+
+    store = JsonHistoryStore(tmp_path / "history.json")
+    history = History()
+    history.record("he", "hello")
+
+    # First save - no previous file, no backup expected.
+    store.save(history)
+    assert not (tmp_path / "history.bak").exists()
+
+    # Second save - previous file exists; backup should be created then removed.
+    history.record("wo", "world")
+    store.save(history)
+    assert not (tmp_path / "history.bak").exists(), (
+        "Backup file should be removed after a successful save"
+    )
+
+    # Loaded history should contain both selections.
+    loaded = store.load()
+    values = [e.value for e in loaded.entries()]
+    assert "hello" in values
+    assert "world" in values
+
+
+def test_backup_file_absent_on_posix(tmp_path: Path) -> None:
+    """On POSIX, no .bak file is created - rename() is already atomic."""
+    from aac.storage.json_store import JsonHistoryStore
+
+    store = JsonHistoryStore(tmp_path / "history.json")
+    h = History()
+    h.record("he", "hello")
+    store.save(h)
+
+    h.record("wo", "world")
+    store.save(h)
+
+    bak = tmp_path / "history.bak"
+    if sys.platform != "win32":
+        assert not bak.exists(), (
+            "No .bak file should be created on POSIX - rename() is atomic"
         )
