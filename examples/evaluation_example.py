@@ -8,9 +8,8 @@ Demonstrates the full evaluation pipeline:
   4. Run weight optimisation to improve MRR
   5. Save the query log to JSONL for reuse
 
-This is the kind of rigorous evaluation that real search teams run.
-No other Python autocomplete library provides an evaluation harness
-out of the box - you either roll your own or skip it entirely.
+The harness compares presets on identical query logs so results
+are directly comparable - no confounds from different query sets.
 
 Run:
     python examples/evaluation_example.py

@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     print(
         f"adaptive-autocomplete: {PRESET} preset loaded, "
-        f"{len(list(ts_history.entries()))} history entries from {HISTORY_PATH}"
+        f"{len(ts_history)} history entries from {HISTORY_PATH}"
     )
 
     yield  # application runs here

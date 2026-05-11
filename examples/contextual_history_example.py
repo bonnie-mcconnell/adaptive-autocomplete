@@ -70,7 +70,7 @@ def main() -> None:
 
     print("\n=== Domain statistics ===")
     for domain, hist in sorted(ctx.domains()):
-        entries = len(list(hist.entries()))
+        entries = len(hist)
         top = list(hist.counts_for_prefix(prefix).items())[:3]
         print(f"  {domain}: {entries} entries, top for {prefix!r}: {top}")
 
@@ -91,7 +91,12 @@ def main() -> None:
     docs_top = docs_engine.suggest(prefix, limit=3)
     shell_top = shell_engine.suggest(prefix, limit=3)
     assert "python3" == shell_top[0], "Shell top should be python3 after 25 selections"
-    assert docs_top[0] != "python3" or True, "Docs may or may not have python3, but rankings differ"
+    # Docs engine has never seen "python3" - it should not be in top results.
+    # Shell and docs histories are fully isolated.
+    assert "python3" not in docs_top, (
+        f"Domain isolation failure: 'python3' appears in docs suggestions {docs_top} "
+        f"despite only being recorded in the shell domain"
+    )
 
     print("  Shell top:", shell_top[:3])
     print("  Docs top: ", docs_top[:3])
