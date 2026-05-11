@@ -61,9 +61,9 @@ def test_engine_describe_shape() -> None:
 def test_engine_describe_history_entries_accurate() -> None:
     """describe()['history_entries'] must reflect the true count of recorded selections.
 
-    Also validates the O(1) implementation: len(self._history._entries)
-    gives the same result as the O(n) len(self._history.entries()) but without
-    creating a full tuple copy on every call.
+    Validates O(1) access: describe() now uses len(self._history) via
+    History.__len__, which reads len(self._entries) directly without
+    allocating a tuple copy.
     """
     engine = get_preset("stateless").build(None, _SMALL_VOCAB)
 

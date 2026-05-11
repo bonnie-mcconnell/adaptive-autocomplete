@@ -425,7 +425,7 @@ class EngineConfig:
         from aac.ranking.learning import LearningRanker
         from aac.ranking.score import ScoreRanker
 
-        resolved_history: History = history or History()
+        resolved_history: History = history if history is not None else History()
 
         predictors: list[WeightedPredictor] = []
         for pc in self.predictors:

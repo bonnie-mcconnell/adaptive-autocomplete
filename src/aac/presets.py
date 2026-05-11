@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 from aac.data import load_english_frequencies
 from aac.domain.history import History
@@ -110,7 +110,7 @@ def _default_engine(
         After a few selections the history signal dominates, which is the
         intended behaviour.
     """
-    history = history or History()
+    history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
@@ -151,7 +151,7 @@ def _recency_boosted_engine(
         up to 2.0, enough to push a history-matched word above any
         frequency-only candidate.
     """
-    history = history or History()
+    history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
@@ -208,7 +208,7 @@ def _robust_engine(
         a high-frequency one.  HistoryPredictor(weight=1.2) is slightly
         higher than frequency to give user selection history a mild edge.
     """
-    history = history or History()
+    history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
@@ -256,7 +256,7 @@ def _bktree_engine(
     Degrades to O(n) at max_distance=2 over 48k+ words (~60ms/call).
     Use the 'robust' preset (SymSpell) for production typo recovery.
     """
-    history = history or History()
+    history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
@@ -323,7 +323,7 @@ def _production_engine(
         SymSpell provides the only typo signal and its 0.35 weight is enough
         to surface a corrected word above a low-frequency exact match.
     """
-    history = history or History()
+    history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
 
     predictors = [
@@ -602,11 +602,10 @@ class PresetComparison:
             parts = [f"{row['value']:<{val_w}}"]
             # row structure is guaranteed by compare_presets() above:
             # {"value": str, "ranks": dict, "base_scores": dict, ...}
-            # cast avoids type: ignore while staying explicit about assumptions.
-            ranks = row["ranks"]
-            bases = row["base_scores"]
-            boosts = row["boosts"]
-            finals = row["finals"]
+            ranks = cast(dict[str, int | None], row["ranks"])
+            bases = cast(dict[str, float | None], row["base_scores"])
+            boosts = cast(dict[str, float | None], row["boosts"])
+            finals = cast(dict[str, float | None], row["finals"])
             for p in self.presets:
                 rank = ranks.get(p)
                 base = bases.get(p)
@@ -756,7 +755,7 @@ def compare_presets(
     all_values = list(seen)
 
     # Build lookup: preset -> {value: (rank, explanation)}
-    lookup: dict[str, dict[str, tuple[int, object]]] = {}
+    lookup: dict[str, dict[str, tuple[int, RankingExplanation]]] = {}
     for name in preset_names:
         lookup[name] = {
             exp.value: (i + 1, exp)

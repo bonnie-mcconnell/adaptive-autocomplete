@@ -47,6 +47,7 @@ def test_engine_explain_returns_reconciled_scores() -> None:
             f"{exp.base_score} + {exp.history_boost} != {exp.final_score}"
         )
 
+
 def test_scoring_constants_shared_across_predictors() -> None:
     """
     All distance-based predictors share the same FREQ_WEIGHT constant
@@ -206,3 +207,54 @@ def test_create_engine_thread_safe_false_gives_plain_history() -> None:
     assert not isinstance(engine.history, ThreadSafeHistory), (
         "Default create_engine must return plain History, not ThreadSafeHistory"
     )
+
+
+def test_vocabulary_from_file_uses_fmt_not_format() -> None:
+    """vocabulary_from_file takes fmt=, not format=. The CLI must use fmt=.
+
+    This catches the kwarg mismatch that would silently fail with a TypeError
+    when --vocab-path is passed on the CLI.
+    """
+    import inspect
+
+    from aac.vocabulary import vocabulary_from_file
+
+    params = list(inspect.signature(vocabulary_from_file).parameters.keys())
+    assert "fmt" in params, "vocabulary_from_file must accept fmt= keyword"
+    assert "format" not in params, (
+        "vocabulary_from_file has no 'format' parameter; CLI must pass fmt="
+    )
+
+    # Verify the fix actually works end-to-end: calling with fmt= must not raise
+    import pathlib
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write("hello\nworld\nprogramming\n")
+        tmp = pathlib.Path(f.name)
+    try:
+        vocab = vocabulary_from_file(tmp, fmt="wordlist")
+        assert "hello" in vocab
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def test_benchmark_engine_diff_no_none_indexing() -> None:
+    """_diff_against_baseline must not index cur['p99'] when cur is None.
+
+    Was a crash bug: the 'missing' branch set cur=None then called cur['p99'],
+    raising TypeError whenever a label existed in baseline but not current.
+    """
+    import contextlib
+    import io
+
+    from aac.benchmarks.benchmark_engine import _diff_against_baseline
+
+    current = {"stateless": {"p50": 0.1, "p95": 0.2, "p99": 0.3, "mean": 0.15}}
+    baseline = {
+        "stateless": {"p50": 0.1, "p95": 0.2, "p99": 0.3, "mean": 0.15},
+        "missing_preset": {"p50": 1.0, "p95": 1.5, "p99": 2.0, "mean": 1.2},
+    }
+    # Must not raise TypeError; capture output to suppress printing
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _diff_against_baseline(current, baseline)
