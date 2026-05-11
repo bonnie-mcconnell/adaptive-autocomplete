@@ -9,6 +9,7 @@ PATH/venv dependency.
 """
 from __future__ import annotations
 
+from http.server import HTTPServer
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -399,8 +400,8 @@ class TestDemoSubcommand:
         server = HTTPServer(("127.0.0.1", port), handler)
         return engine, server, port
 
-    def _one_request(self, server, path: str):
-        """Serve exactly one request and return (status, body_bytes)."""
+    def _one_request(self, server: HTTPServer, path: str) -> tuple[int, bytes]:
+        """Serve exactly one GET request and return (status, body_bytes)."""
         import http.client
         import threading
         import time
@@ -417,6 +418,33 @@ class TestDemoSubcommand:
             resp = conn.getresponse()
             body = resp.read()
             return resp.status, body
+        finally:
+            conn.close()
+            thread.join(timeout=2)
+
+    def _post_request(self, server: HTTPServer, path: str, body: str = "") -> tuple[int, bytes]:
+        """Serve exactly one POST request and return (status, body_bytes)."""
+        import http.client
+        import threading
+        import time
+
+        port = server.server_address[1]
+        thread = threading.Thread(target=lambda: server.handle_request())
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.05)
+
+        encoded = body.encode("utf-8")
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request(
+                "POST", path, body=encoded,
+                headers={"Content-Type": "application/x-www-form-urlencoded",
+                         "Content-Length": str(len(encoded))},
+            )
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, data
         finally:
             conn.close()
             thread.join(timeout=2)
@@ -476,11 +504,11 @@ class TestDemoSubcommand:
             assert key in first, f"Missing key {key!r} in explain response: {first}"
 
     def test_demo_record_persists_selection(self) -> None:
-        """GET /record?q=he&value=hello records the selection and returns {recorded: true}."""
+        """POST /record records the selection and returns {recorded: true}."""
         import json as _json
 
         engine, server, _ = self._make_server({"hello": 100, "help": 80}, preset="default")
-        status, body = self._one_request(server, "/record?q=he&value=hello")
+        status, body = self._post_request(server, "/record", "q=he&value=hello")
         data = _json.loads(body)
 
         assert status == 200
@@ -488,11 +516,11 @@ class TestDemoSubcommand:
         assert engine.history.counts_for_prefix("he").get("hello") == 1
 
     def test_demo_record_empty_query_still_responds(self) -> None:
-        """GET /record with empty q returns {recorded: false} without crashing."""
+        """POST /record with empty q returns {recorded: false} without crashing."""
         import json as _json
 
         _, server, _ = self._make_server({"hello": 100}, preset="default")
-        status, body = self._one_request(server, "/record?q=&value=hello")
+        status, body = self._post_request(server, "/record", "q=&value=hello")
         data = _json.loads(body)
         assert status == 200
         assert data.get("recorded") is False

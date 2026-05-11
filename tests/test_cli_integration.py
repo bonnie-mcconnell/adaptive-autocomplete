@@ -149,7 +149,7 @@ class TestCliRoundTrip:
     def test_typo_recovery(self, tmp_path: Path) -> None:
         """Production preset recovers from a single-character typo."""
         result = _aac(
-            "--preset", "production", "suggest", "programing",
+            "suggest", "--preset", "production", "programing",
             history_path=tmp_path / "history.json",
         )
         assert "programming" in result.stdout, (

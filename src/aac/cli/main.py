@@ -392,7 +392,13 @@ def main() -> None:
 
     # Resolve history_path: subcommand-local --history-path wins; global fallback
     # lets users write `aac --history-path /path record he hello` (global form).
-    if not hasattr(args, "history_path"):
+    # We compare against DEFAULT_HISTORY_PATH rather than hasattr() because every
+    # subcommand with _add_shared_args() already has history_path set to the default.
+    local_is_default = (
+        not hasattr(args, "history_path")
+        or args.history_path == DEFAULT_HISTORY_PATH
+    )
+    if local_is_default and getattr(args, "history_path_global", None) is not None:
         args.history_path = args.history_path_global
 
     try:
@@ -410,7 +416,7 @@ def _load_vocabulary(args: argparse.Namespace) -> dict[str, int] | None:
         return None
     from aac.vocabulary import vocabulary_from_file
     try:
-        vocab = vocabulary_from_file(vocab_path, format=getattr(args, "vocab_format", "wordlist"))
+        vocab = vocabulary_from_file(vocab_path, fmt=getattr(args, "vocab_format", "wordlist"))
     except FileNotFoundError:
         print(f"aac: error: vocabulary file not found: {vocab_path}", file=sys.stderr)
         sys.exit(1)
