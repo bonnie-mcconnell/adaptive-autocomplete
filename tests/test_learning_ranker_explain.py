@@ -77,7 +77,7 @@ def test_explain_final_score_invariant() -> None:
 def test_explain_does_not_mutate_history() -> None:
     history = History()
     LearningRanker(history).explain("he", _suggestions("hello"))
-    assert len(history.entries()) == 0
+    assert len(history) == 0
 
 
 def test_explain_as_dicts_not_on_ranker() -> None:

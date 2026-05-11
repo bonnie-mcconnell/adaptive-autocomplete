@@ -901,7 +901,7 @@ class AutocompleteEngine:
 
         Intended for CLI inspection, debugging, and documentation.
         ``history_entries`` is the total number of recorded selections across
-        all prefixes.  Reading ``len(self._history._entries)`` directly is
+        all prefixes.  Reading ``len(self._history)`` directly is
         intentional: ``entries()`` returns a full tuple copy (O(n) allocation)
         while ``_entries`` is the underlying list (O(1) len).
         """
@@ -911,7 +911,7 @@ class AutocompleteEngine:
                 for wp in self._predictors
             ],
             "rankers": [r.__class__.__name__ for r in self._rankers],
-            "history_entries": len(self._history._entries),
+            "history_entries": len(self._history),
         }
 
     @property

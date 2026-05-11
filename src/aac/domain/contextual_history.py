@@ -175,13 +175,9 @@ class ContextualHistory:
         self._histories[domain] = history
 
     def total_entries(self) -> int:
-        """Total number of recorded entries across all domains.
-
-        Uses ``len(h._entries)`` directly (O(1)) rather than
-        ``len(h.entries())`` (O(n) - allocates a full tuple copy).
-        """
-        return sum(len(h._entries) for h in self._histories.values())
+        """Total number of recorded entries across all domains. O(1)."""
+        return sum(len(h) for h in self._histories.values())
 
     def __repr__(self) -> str:
-        domain_counts = {d: len(h.entries()) for d, h in self._histories.items()}
+        domain_counts = {d: len(h) for d, h in self._histories.items()}
         return f"ContextualHistory(domains={domain_counts})"

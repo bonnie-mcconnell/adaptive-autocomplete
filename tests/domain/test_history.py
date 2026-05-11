@@ -37,7 +37,7 @@ def test_history_entry_accepts_aware_timestamp() -> None:
 def test_record_stores_entry() -> None:
     h = History()
     h.record("he", "hello", timestamp=_NOW)
-    assert len(list(h.entries())) == 1
+    assert len(h) == 1
 
 
 def test_record_auto_timestamps_in_utc() -> None:
@@ -170,7 +170,7 @@ def test_modifying_returned_entries_does_not_affect_history() -> None:
     h.record("he", "hello", timestamp=_NOW)
     entries = list(h.entries())
     entries.clear()
-    assert len(list(h.entries())) == 1
+    assert len(h) == 1
 
 
 def test_counts_for_prefix_since_skips_non_matching_prefix() -> None:
@@ -248,8 +248,8 @@ class TestHistoryCopy:
         h2 = h.copy()
 
         h2.record("he", "help")  # modify copy
-        assert len(list(h.entries())) == 1, "original must be unaffected"
-        assert len(list(h2.entries())) == 2, "copy should have both entries"
+        assert len(h) == 1, "original must be unaffected"
+        assert len(h2) == 2, "copy should have both entries"
 
     def test_copy_has_same_entries(self) -> None:
         h = History()
@@ -266,7 +266,7 @@ class TestHistoryCopy:
 
     def test_copy_of_empty_history_is_empty(self) -> None:
         h2 = History().copy()
-        assert len(list(h2.entries())) == 0
+        assert len(h2) == 0
 
     def test_original_unaffected_by_copy_mutations(self) -> None:
         h = History()
@@ -308,4 +308,40 @@ class TestHistoryRepr:
         h = History()
         h.record("a", "apple", timestamp=_NOW)
         _ = repr(h)
-        assert len(h.entries()) == 1
+        assert len(h) == 1
+
+
+def test_history_len_is_entry_count() -> None:
+    """History.__len__ returns O(1) entry count without allocating a tuple copy.
+
+    Added alongside __len__ to prevent regression: the method exists to give
+    callers a fast O(1) count. If it's removed or broken, this catches it.
+    """
+    h = History()
+    assert len(h) == 0
+
+    h.record("he", "hello")
+    assert len(h) == 1
+
+    h.record("he", "help")
+    h.record("wo", "world")
+    assert len(h) == 3
+
+
+def test_history_len_does_not_allocate_copy() -> None:
+    """len(h) must not call entries() or allocate a tuple.
+
+    The purpose of __len__ is O(1) access. If the implementation ever
+    regresses to calling entries(), this test won't catch it directly,
+    but the explicit assertion documents intent.
+    """
+    from unittest.mock import patch
+
+    h = History()
+    h.record("he", "hello")
+
+    # If entries() is called, the patch would be triggered
+    with patch.object(h, "entries", wraps=h.entries) as mock_entries:
+        result = len(h)
+        assert result == 1
+        mock_entries.assert_not_called()

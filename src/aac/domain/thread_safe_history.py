@@ -222,7 +222,7 @@ class ThreadSafeHistory(History):
     def __repr__(self) -> str:
         self._acquire_read()
         try:
-            n = len(self._entries)
+            n = len(self)
         finally:
             self._release_read()
         return f"ThreadSafeHistory(entries={n})"

@@ -39,7 +39,7 @@ def test_entries_survive_round_trip(tmp_path: Path) -> None:
     store.save(history)
     loaded = store.load()
 
-    assert len(list(loaded.entries())) == 2
+    assert len(loaded) == 2
     counts = loaded.counts_for_prefix("he")
     assert counts == {"hello": 1, "hero": 1}
 
@@ -161,7 +161,7 @@ def test_malformed_entries_are_skipped(tmp_path: Path) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
     loaded = JsonHistoryStore(path).load()
 
-    assert len(list(loaded.entries())) == 2
+    assert len(loaded) == 2
     counts = loaded.counts_for_prefix("he")
     assert "hello" in counts
     assert "help" in counts

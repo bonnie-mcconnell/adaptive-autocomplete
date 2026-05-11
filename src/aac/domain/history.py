@@ -123,6 +123,10 @@ class History:
     # Read APIs
     # ------------------------------------------------------------
 
+    def __len__(self) -> int:
+        """Number of recorded entries. O(1)."""
+        return len(self._entries)
+
     def entries(self) -> Sequence[HistoryEntry]:
         """
         Immutable view of all recorded history entries.

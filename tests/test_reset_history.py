@@ -32,10 +32,10 @@ class TestResetHistory:
     def test_clears_in_memory_history(self) -> None:
         engine = create_engine("default", vocabulary=_VOCAB)
         engine.record_selection("he", "heap")
-        assert len(list(engine.history.entries())) > 0
+        assert len(engine.history) > 0
 
         engine.reset_history()
-        assert len(list(engine.history.entries())) == 0
+        assert len(engine.history) == 0
 
     def test_affects_subsequent_suggestions(self) -> None:
         """After reset, suggestions must reflect zero history."""
@@ -58,7 +58,7 @@ class TestResetHistory:
 
         engine.reset_history()
         assert engine.history is not old_history
-        assert len(list(engine.history.entries())) == 0
+        assert len(engine.history) == 0
 
     def test_learning_rankers_see_new_history(self) -> None:
         """Learning rankers must read from the new History after reset."""
@@ -90,18 +90,18 @@ class TestResetHistory:
             store.save(engine.history)
 
             engine.reset_history()
-            assert len(list(engine.history.entries())) == 0
+            assert len(engine.history) == 0
 
             # Store file must still have the old entry
             reloaded = store.load()
-            assert len(list(reloaded.entries())) == 1
+            assert len(reloaded) == 1
 
     def test_multiple_resets_are_idempotent(self) -> None:
         engine = create_engine("default", vocabulary=_VOCAB)
         engine.record_selection("he", "hello")
         engine.reset_history()
         engine.reset_history()  # must not raise
-        assert len(list(engine.history.entries())) == 0
+        assert len(engine.history) == 0
 
     def test_can_record_after_reset(self) -> None:
         """Engine must be fully functional after reset."""
@@ -182,6 +182,6 @@ class TestPredictorLearnsFromHistoryProtocol:
         assert hist_predictor.history is engine.history, (
             "HistoryPredictor.history must point to the new History after reset"
         )
-        assert len(list(hist_predictor.history.entries())) == 0, (
+        assert len(hist_predictor.history) == 0, (
             "HistoryPredictor must see the new empty history after reset"
         )
