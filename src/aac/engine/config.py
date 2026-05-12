@@ -505,7 +505,7 @@ class EngineConfig:
                 # Programming error (violated loop invariant), not user input,
                 # so a RuntimeError is appropriate - but we avoid bare assert which is
                 # stripped by -O and provides no message.
-                if b is None:
+                if b is None:  # pragma: no cover
                     raise RuntimeError(
                         f"diff() invariant violated: predictor {name!r} missing from both configs"
                     )
