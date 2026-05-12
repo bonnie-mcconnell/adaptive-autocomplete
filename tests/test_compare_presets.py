@@ -151,3 +151,46 @@ class TestWarmCache:
             f"compare_presets() took {elapsed_ms:.0f}ms after warm_cache(). "
             f"Expected < 500ms (engine should be cached)."
         )
+
+
+class TestPresetComparisonEdgeCases:
+    """Tests for PresetComparison methods not covered by TestComparePresets."""
+
+    def test_to_table_returns_no_suggestions_message_when_no_rows(self) -> None:
+        """
+        to_table() on a comparison with no rows must return the
+        "No suggestions for..." message, not an empty string or crash.
+
+        This covers the early-return branch in to_table() (presets.py line 581).
+        An empty rows list occurs when neither preset found any completions for
+        the query - e.g. a prefix that doesn't match any vocabulary word.
+        """
+        from aac.presets import PresetComparison
+
+        empty = PresetComparison(
+            text="zzzquux",  # prefix with no vocabulary matches
+            presets=["stateless"],
+            rows=[],
+        )
+        table = empty.to_table()
+        assert "No suggestions" in table
+        assert "zzzquux" in table
+
+    def test_preset_comparison_repr(self) -> None:
+        """
+        PresetComparison.__repr__ must include text, presets, and row count
+        so it's informative in debug output.
+
+        This covers presets.py line 626.
+        """
+        from aac.presets import PresetComparison
+
+        cmp = PresetComparison(
+            text="prog",
+            presets=["stateless", "production"],
+            rows=[{"value": "program"}, {"value": "programming"}],
+        )
+        r = repr(cmp)
+        assert "prog" in r
+        assert "stateless" in r
+        assert "2" in r  # row count

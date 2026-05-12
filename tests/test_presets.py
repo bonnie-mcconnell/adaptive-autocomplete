@@ -58,7 +58,23 @@ def test_engine_describe_shape() -> None:
     assert isinstance(info["rankers"], list)
 
 
-def test_engine_describe_history_entries_accurate() -> None:
+
+def test_bktree_preset_is_accessible_directly() -> None:
+    """
+    The 'bktree' preset is excluded from available_presets() (it degrades to O(n)
+    at 48k+ words and is not recommended for production), but must still be
+    accessible via create_engine("bktree") for users who need it explicitly
+    - e.g. benchmarking BK-tree vs SymSpell performance.
+
+    This test exercises _bktree_engine() with a small vocabulary so the
+    O(n) characteristic doesn't make CI slow.
+    """
+    engine = get_preset("bktree").build(None, _SMALL_VOCAB)
+    assert isinstance(engine, AutocompleteEngine)
+
+    results = engine.suggest("hel")
+    assert len(results) > 0, "bktree preset must produce suggestions for 'hel'"
+    assert "hello" in results or "help" in results or "here" in results
     """describe()['history_entries'] must reflect the true count of recorded selections.
 
     Validates O(1) access: describe() now uses len(self._history) via

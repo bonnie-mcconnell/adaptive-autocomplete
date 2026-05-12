@@ -128,8 +128,123 @@ class TestFrequencyPredictorValidation:
 
 
 # ---------------------------------------------------------------------------
-# Default max_results guard (was 20, raised to 100)
+# add_word() - runtime vocabulary growth
 # ---------------------------------------------------------------------------
+
+class TestFrequencyPredictorAddWord:
+    """
+    add_word() allows runtime vocabulary updates without rebuilding the index.
+
+    Test strategy: verify each branch of the method's conditional logic.
+    The implementation has four non-trivial paths:
+      1. No-op for frequency <= 0
+      2. No-op for empty string
+      3. New word (prefix bucket doesn't exist yet)
+      4. Update existing word:
+         a. to higher frequency (word moves earlier in bucket)
+         b. to lower frequency (word falls to end of bucket)
+         c. exceeding current max_freq (updates log normaliser)
+    """
+
+    def test_zero_frequency_is_ignored(self) -> None:
+        """add_word with frequency=0 must not add or change anything."""
+        p = FrequencyPredictor({"hello": 10, "help": 5})
+        before = [s.suggestion.value for s in p.predict(CompletionContext("he"))]
+        p.add_word("newword", 0)
+        after = [s.suggestion.value for s in p.predict(CompletionContext("ne"))]
+        assert after == [], "zero-frequency word must not appear in suggestions"
+        # hello/help ordering must be unchanged
+        assert [s.suggestion.value for s in p.predict(CompletionContext("he"))] == before
+
+    def test_negative_frequency_is_ignored(self) -> None:
+        p = FrequencyPredictor({"hello": 10})
+        p.add_word("bad", -5)
+        assert p.predict(CompletionContext("ba")) == []
+
+    def test_empty_string_is_ignored(self) -> None:
+        """add_word with an empty string must not corrupt the index."""
+        p = FrequencyPredictor({"hello": 10})
+        p.add_word("", 100)
+        # Index must be unchanged - no key "" should appear
+        assert "" not in p._index
+
+    def test_new_word_appears_in_suggestions(self) -> None:
+        """A newly added word that shares a prefix with vocab words must be suggested."""
+        p = FrequencyPredictor({"hello": 10, "help": 5})
+        p.add_word("herald", 8)
+        results = {s.suggestion.value for s in p.predict(CompletionContext("he"))}
+        assert "herald" in results
+
+    def test_new_word_with_novel_prefix(self) -> None:
+        """A word whose prefix has no existing bucket must create that bucket."""
+        p = FrequencyPredictor({"hello": 10})
+        p.add_word("zebra", 50)
+        results = {s.suggestion.value for s in p.predict(CompletionContext("ze"))}
+        assert "zebra" in results
+
+    def test_update_to_higher_frequency_moves_word_earlier(self) -> None:
+        """
+        Updating an existing word to a higher frequency must move it earlier
+        in the bucket so it appears before lower-frequency words.
+
+        Before: "help" (freq=5) < "hello" (freq=10) - hello ranks first
+        After update "help" to freq=100: "help" must rank before "hello"
+        """
+        p = FrequencyPredictor({"hello": 10, "help": 5})
+        results_before = [s.suggestion.value for s in p.predict(CompletionContext("hel"))]
+        assert results_before[0] == "hello", "Pre-condition: hello ranks first (higher frequency)"
+
+        p.add_word("help", 100)  # now help outranks hello
+
+        results_after = [s.suggestion.value for s in p.predict(CompletionContext("hel"))]
+        assert results_after[0] == "help", (
+            "After boosting 'help' to freq=100, it must rank before 'hello' (freq=10)"
+        )
+
+    def test_update_existing_word_does_not_duplicate_it(self) -> None:
+        """Updating an existing word must not create a duplicate entry."""
+        p = FrequencyPredictor({"hello": 10, "help": 5})
+        p.add_word("hello", 50)
+        results = [s.suggestion.value for s in p.predict(CompletionContext("he"))]
+        assert results.count("hello") == 1, "hello must appear exactly once after update"
+
+    def test_update_exceeding_max_freq_updates_log_normaliser(self) -> None:
+        """
+        When add_word introduces a word with frequency > current max_freq,
+        the log normaliser must update so all scores remain in (0, 1].
+
+        If _log_max is not updated, the new high-frequency word would score > 1.0,
+        violating the invariant that all scores are in (0, 1].
+        """
+        p = FrequencyPredictor({"hello": 10, "help": 5})
+        old_log_max = p._log_max
+
+        p.add_word("the", 100_000)  # much higher than current max (10)
+
+        assert p._log_max > old_log_max, "log normaliser must update when max_freq increases"
+        # All scores must remain in (0, 1]
+        for s in p.predict(CompletionContext("t")):
+            assert 0.0 < s.score <= 1.0, (
+                f"Score {s.score} for '{s.suggestion.value}' out of (0,1] after max_freq update"
+            )
+        for s in p.predict(CompletionContext("hel")):
+            assert 0.0 < s.score <= 1.0, (
+                f"Score {s.score} for '{s.suggestion.value}' out of (0,1] after max_freq update"
+            )
+
+    def test_zero_frequency_in_constructor_skipped(self) -> None:
+        """
+        Words with frequency=0 in the constructor vocab must not appear in
+        the index or in suggestions.
+
+        This covers the `continue` branch in FrequencyPredictor.__init__
+        that skips zero-frequency entries at build time.
+        """
+        p = FrequencyPredictor({"hello": 10, "ghost": 0, "help": 5})
+        results = {s.suggestion.value for s in p.predict(CompletionContext("gh"))}
+        assert "ghost" not in results, (
+            "Zero-frequency word 'ghost' must be excluded from the index at build time"
+        )
 
 class TestFrequencyPredictorDefault:
     def test_default_max_results_is_100(self) -> None:

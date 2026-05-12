@@ -380,6 +380,7 @@ def test_windows_backup_created_before_replace(tmp_path: Path) -> None:
     assert "world" in values
 
 
+
 def test_backup_file_absent_on_posix(tmp_path: Path) -> None:
     """On POSIX, no .bak file is created - rename() is already atomic."""
     from aac.storage.json_store import JsonHistoryStore
@@ -397,3 +398,35 @@ def test_backup_file_absent_on_posix(tmp_path: Path) -> None:
         assert not bak.exists(), (
             "No .bak file should be created on POSIX - rename() is atomic"
         )
+
+
+def test_unreadable_file_returns_empty_history(tmp_path: Path) -> None:
+    """
+    When the history file exists but cannot be read (OSError - e.g. a
+    permissions issue or file lock on Windows), load() must return an empty
+    History and not raise.
+
+    This covers the OSError branch in JsonHistoryStore.load() (lines 83-90
+    in json_store.py). The real-world scenario: a file owned by root, or
+    locked by antivirus on Windows. The engine must degrade gracefully rather
+    than crash at startup.
+
+    We patch pathlib.Path.read_text at the class level to simulate an OSError.
+    Patching a Path instance's method is not possible (PosixPath slots are
+    read-only); patching the class method is the standard approach and is safe
+    here because the patch is scoped to the with-block.
+    """
+    from unittest.mock import patch
+
+    from aac.storage.json_store import JsonHistoryStore
+
+    store = JsonHistoryStore(tmp_path / "history.json")
+    # Create the file so exists() returns True
+    (tmp_path / "history.json").write_text("{}", encoding="utf-8")
+
+    with patch("pathlib.Path.read_text", side_effect=OSError("Permission denied")):
+        loaded = store.load()
+
+    assert len(loaded) == 0, (
+        "load() must return an empty History when the file exists but cannot be read"
+    )

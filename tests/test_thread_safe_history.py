@@ -1,23 +1,220 @@
 """
-Concurrency tests for ThreadSafeHistory.
+Tests for ThreadSafeHistory: both API correctness and concurrency safety.
 
-These tests deliberately exercise concurrent access patterns that can expose
-races in naive implementations:
-  - Many readers with an interleaved writer
-  - Many writers with no coordination outside the class
-  - snapshot_counts() and copy() under concurrent mutation
-  - snapshot_history() consistency under load
+Structure:
+  TestThreadSafeHistoryAPI  - correctness of all public methods on the single-
+                              threaded fast path, including the source-copy
+                              constructor, all read methods, deprecated snapshot(),
+                              __repr__, and the lock property.
+  TestThreadSafeHistoryConcurrency - concurrent access patterns that expose races
+                                     in naive implementations.
 
-These tests are probabilistic: a correct implementation should pass
-deterministically, but a broken implementation will fail with high
-probability due to race conditions manifesting as assertion errors,
-incorrect counts, or (on free-threaded builds) memory corruption.
+Concurrency tests are probabilistic: a correct implementation should pass
+deterministically, but a broken implementation will fail with high probability
+due to race conditions manifesting as assertion errors, incorrect counts, or
+(on free-threaded builds) memory corruption.
 """
 from __future__ import annotations
 
 import threading
+import warnings
 
+from aac.domain.history import History
 from aac.domain.thread_safe_history import ThreadSafeHistory
+
+
+class TestThreadSafeHistoryAPI:
+    """Single-threaded API correctness tests for all public methods."""
+
+    # ------------------------------------------------------------------
+    # Constructor
+    # ------------------------------------------------------------------
+
+    def test_empty_constructor_starts_empty(self) -> None:
+        history = ThreadSafeHistory()
+        assert len(history) == 0
+        assert history.entries() == ()
+
+    def test_source_constructor_copies_entries(self) -> None:
+        """
+        ThreadSafeHistory(source=existing) must copy all entries from source.
+
+        This is the primary use case: loading history from JsonHistoryStore
+        and wrapping it for thread-safe access.
+        """
+        source = History()
+        source.record("he", "hello")
+        source.record("he", "help")
+        source.record("wo", "world")
+
+        ts = ThreadSafeHistory(source=source)
+
+        assert ts.counts_for_prefix("he") == {"hello": 1, "help": 1}
+        assert ts.counts_for_prefix("wo") == {"world": 1}
+        assert len(ts) == 3
+
+    def test_source_constructor_independent_of_source(self) -> None:
+        """
+        Mutations to source after construction must not affect ThreadSafeHistory.
+
+        ThreadSafeHistory copies entries at construction time; it does not hold
+        a reference to the source.
+        """
+        source = History()
+        source.record("he", "hello")
+        ts = ThreadSafeHistory(source=source)
+
+        source.record("he", "help")  # mutate original after copy
+
+        assert "help" not in ts.counts_for_prefix("he"), (
+            "ThreadSafeHistory must not share state with the source History"
+        )
+
+    # ------------------------------------------------------------------
+    # entries() and entries_for_prefix()
+    # ------------------------------------------------------------------
+
+    def test_entries_returns_all_recorded_entries(self) -> None:
+        """entries() must return every recorded entry across all prefixes."""
+        history = ThreadSafeHistory()
+        history.record("he", "hello")
+        history.record("wo", "world")
+
+        all_entries = history.entries()
+        values = {e.value for e in all_entries}
+        prefixes = {e.prefix for e in all_entries}
+
+        assert values == {"hello", "world"}
+        assert prefixes == {"he", "wo"}
+
+    def test_entries_for_prefix_filters_correctly(self) -> None:
+        """entries_for_prefix() must return only entries for the given prefix."""
+        history = ThreadSafeHistory()
+        history.record("he", "hello")
+        history.record("he", "help")
+        history.record("wo", "world")
+
+        he_entries = history.entries_for_prefix("he")
+        assert all(e.prefix == "he" for e in he_entries)
+        assert {e.value for e in he_entries} == {"hello", "help"}
+
+    def test_entries_for_unknown_prefix_returns_empty(self) -> None:
+        history = ThreadSafeHistory()
+        history.record("he", "hello")
+        assert history.entries_for_prefix("xyz") == ()
+
+    # ------------------------------------------------------------------
+    # counts_for_prefix_since()
+    # ------------------------------------------------------------------
+
+    def test_counts_for_prefix_since_filters_by_time(self) -> None:
+        """
+        counts_for_prefix_since() must only count entries at or after `since`.
+
+        Uses explicit timestamps to make the time boundary deterministic.
+        """
+        from datetime import datetime, timezone
+
+        t0 = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        t1 = datetime(2024, 1, 1, 1, 0, 0, tzinfo=timezone.utc)
+        t2 = datetime(2024, 1, 1, 2, 0, 0, tzinfo=timezone.utc)
+
+        history = ThreadSafeHistory()
+        history.record("he", "hello", timestamp=t0)   # before cutoff
+        history.record("he", "help",  timestamp=t1)   # at cutoff
+        history.record("he", "hero",  timestamp=t2)   # after cutoff
+
+        counts = history.counts_for_prefix_since("he", t1)
+        assert "hello" not in counts, "Entry before cutoff must be excluded"
+        assert counts.get("help", 0) == 1, "Entry at cutoff must be included"
+        assert counts.get("hero", 0) == 1, "Entry after cutoff must be included"
+
+    # ------------------------------------------------------------------
+    # count()
+    # ------------------------------------------------------------------
+
+    def test_count_returns_total_across_all_prefixes(self) -> None:
+        """count(value) returns total times `value` was selected, any prefix."""
+        history = ThreadSafeHistory()
+        history.record("he", "hello")
+        history.record("hel", "hello")   # same value, different prefix
+        history.record("wo", "world")
+
+        assert history.count("hello") == 2
+        assert history.count("world") == 1
+        assert history.count("nothere") == 0
+
+    # ------------------------------------------------------------------
+    # snapshot() deprecated
+    # ------------------------------------------------------------------
+
+    def test_snapshot_deprecated_emits_deprecation_warning(self) -> None:
+        """
+        snapshot() is deprecated in favour of snapshot_counts().
+        Calling it must emit a DeprecationWarning so callers know to migrate.
+        """
+        history = ThreadSafeHistory()
+        history.record("he", "hello")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            history.snapshot()  # return value tested in test_snapshot_deprecated_returns_correct_data
+
+        assert len(caught) == 1
+        assert issubclass(caught[0].category, DeprecationWarning)
+        assert "snapshot_counts" in str(caught[0].message)
+
+    def test_snapshot_deprecated_returns_correct_data(self) -> None:
+        """snapshot() must still return correct data despite being deprecated."""
+        history = ThreadSafeHistory()
+        history.record("he", "hello")
+        history.record("he", "hello")
+        history.record("wo", "world")
+
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            snap = history.snapshot()
+
+        assert snap["he"]["hello"] == 2
+        assert snap["wo"]["world"] == 1
+
+    # ------------------------------------------------------------------
+    # __repr__
+    # ------------------------------------------------------------------
+
+    def test_repr_shows_entry_count(self) -> None:
+        """
+        __repr__ must include the entry count so repr(history) is informative
+        in debuggers and test output.
+        """
+        history = ThreadSafeHistory()
+        assert "0" in repr(history)
+
+        history.record("he", "hello")
+        history.record("wo", "world")
+        assert "2" in repr(history)
+
+    def test_repr_identifies_class(self) -> None:
+        history = ThreadSafeHistory()
+        assert "ThreadSafeHistory" in repr(history)
+
+    # ------------------------------------------------------------------
+    # lock property
+    # ------------------------------------------------------------------
+
+    def test_lock_property_returns_condition(self) -> None:
+        """
+        The lock property exposes the internal Condition for advanced
+        compound atomic operations. It must return a threading.Condition.
+        """
+        history = ThreadSafeHistory()
+        import threading as _threading
+        assert isinstance(history.lock, _threading.Condition)
+
+    def test_lock_is_same_object_across_calls(self) -> None:
+        """The lock property must return the same object, not a new one each time."""
+        history = ThreadSafeHistory()
+        assert history.lock is history.lock
 
 _THREAD_COUNT = 10
 _WRITES_PER_THREAD = 50
