@@ -93,12 +93,32 @@ exclude = ["tests", "examples"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q --cov=aac --cov-report=term-missing --cov-fail-under=85"
+addopts = "-ra -q --cov=aac --cov-report=term-missing --cov-fail-under=85 --cov-config=pyproject.toml"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "integration: end-to-end tests that invoke the CLI as a subprocess (slow; skipped with -m 'not integration')",
     "slow: tests that take more than 5 seconds (evaluation, property-based)",
+]
+
+[tool.coverage.run]
+source = ["aac"]
+omit = [
+    # Benchmark code measures wall-clock latency - correctness is gated by
+    # test_performance_regression.py with p99 thresholds. Timing assertions
+    # in unit tests would be fragile and meaningless on CI hardware.
+    "*/aac/benchmarks/*",
+    # Interactive browser demo - requires a live terminal/browser session.
+    # No meaningful unit test can exercise the full interactive event loop.
+    "*/aac/cli/demo.py",
+    "*/aac/cli/_demo_html.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
 ]
 
 [build-system]

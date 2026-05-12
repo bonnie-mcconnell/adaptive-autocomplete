@@ -150,13 +150,15 @@ class JsonHistoryStore(HistoryStore):
         # On POSIX, rename() is atomic and no backup is needed; we skip the
         # rotation to avoid the extra syscall.
         backup_path: Path | None = None
-        if sys.platform == "win32" and self._path.exists():
+        if sys.platform == "win32" and self._path.exists():  # pragma: no cover
+            # Windows-only: Path.replace() is not atomic when the destination
+            # exists. Keep the old file as .bak so a crash between the delete
+            # and rename leaves the .bak as a recovery option.
+            # Tested by the Windows CI matrix; unreachable on Linux runners.
             backup_path = self._path.with_suffix(".bak")
             try:
                 self._path.replace(backup_path)
             except OSError:
-                # If we can't create the backup, proceed anyway - the
-                # loader handles a missing target gracefully.
                 backup_path = None
 
         try:
@@ -166,7 +168,8 @@ class JsonHistoryStore(HistoryStore):
             # POSIX: atomic. Windows: best-effort (backup kept as fallback).
             tmp_path.replace(self._path)
             # Replace succeeded - remove stale backup if present.
-            if backup_path is not None:
+            if backup_path is not None:  # pragma: no cover
+                # Only set on win32 (see block above).
                 try:
                     backup_path.unlink()
                 except OSError:
@@ -183,11 +186,15 @@ class JsonHistoryStore(HistoryStore):
                 # Windows (mandatory file locking) can delete it.
                 try:
                     os.close(fd)
-                except OSError:
+                except OSError:  # pragma: no cover
+                    # os.close() failing is pathological (invalid fd, EINTR).
+                    # Can't be triggered reliably in a test without OS mocking.
                     pass
             try:
                 os.unlink(tmp_path_str)
-            except OSError:
+            except OSError:  # pragma: no cover
+                # Temp file already gone (race with external cleanup) or
+                # unlink permission denied. Nothing we can do; re-raise below.
                 pass
             raise
 

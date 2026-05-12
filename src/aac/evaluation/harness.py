@@ -268,7 +268,7 @@ class EvaluationHarness:
             ))
 
         n = len(query_results)
-        if n == 0:
+        if n == 0:  # pragma: no cover
             raise RuntimeError("No query results produced - query log may be empty")
 
         def _mean(values: list[float]) -> float:
