@@ -919,6 +919,29 @@ class AutocompleteEngine:
         """Return the engine's history source of truth."""
         return self._history
 
+    @property
+    def predictors(self) -> list[WeightedPredictor]:
+        """
+        Return a list of the engine's weighted predictors.
+
+        Useful for accessing individual predictors at runtime - for example,
+        to call ``FrequencyPredictor.add_word()`` to extend the vocabulary
+        without rebuilding the engine::
+
+            engine = create_engine("production")
+            freq = next(
+                wp.predictor for wp in engine.predictors
+                if wp.predictor.name == "frequency"
+            )
+            freq.add_word("asyncio", 500)
+
+        The list is a copy of the internal sequence. Appending to it does not
+        modify the engine; to change the predictor set, construct a new engine.
+        Individual predictor objects are the live instances and their mutable
+        state (e.g. the FrequencyPredictor index) is shared with the engine.
+        """
+        return list(self._predictors)
+
     def to_config(
         self,
         *,
@@ -966,6 +989,7 @@ class AutocompleteEngine:
         """
         from aac.engine.config import EngineConfig, PredictorConfig, RankerConfig
         from aac.ranking.decay import DecayRanker
+        from aac.ranking.learning import LearningRanker
 
         predictors = [
             PredictorConfig(name=wp.predictor.name, weight=wp.weight)
@@ -977,6 +1001,15 @@ class AutocompleteEngine:
             if isinstance(r, DecayRanker):
                 rankers.append(RankerConfig(
                     name="decay",
+                    params=r.ranker_config(),
+                ))
+            elif isinstance(r, LearningRanker):
+                # ranker_config() returns {"boost": ..., "dominance_ratio": ...}.
+                # Must be serialised explicitly - the else branch below produces
+                # an empty params dict, silently losing non-default configuration
+                # and breaking config round-trips.
+                rankers.append(RankerConfig(
+                    name="learning",
                     params=r.ranker_config(),
                 ))
             else:

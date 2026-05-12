@@ -125,7 +125,7 @@ make install
 source .venv/bin/activate   # Linux/macOS
 # .venv\Scripts\activate    # Windows PowerShell
 
-make demo          # interactive browser demo
+make demo          # interactive browser demo (first run takes ~5s while SymSpell index builds)
 make test-fast     # unit tests, ~30s
 make test          # full suite, ~3 min
 make benchmark     # latency numbers
@@ -162,7 +162,7 @@ comparison = compare_presets("programing", presets=["default", "production"])
 
 ## Tests
 
-594 tests: invariant correctness, IR metrics, evaluation harness, concurrency, async API, CLI integration, and property-based fuzzing with Hypothesis.
+650+ tests: invariant correctness, IR metrics, evaluation harness, concurrency, async API, CLI integration, and property-based fuzzing with Hypothesis.
 
 Key coverage:
 

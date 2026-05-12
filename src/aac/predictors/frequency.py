@@ -163,8 +163,13 @@ class FrequencyPredictor(Predictor):
 
         Example::
 
+            from aac.presets import create_engine
             engine = create_engine("production")
-            engine.predictors[0].add_word("asyncio", 500)  # surface asyncio early
+            freq = next(
+                wp.predictor for wp in engine.predictors
+                if wp.predictor.name == "frequency"
+            )
+            freq.add_word("asyncio", 500)  # surface asyncio early
         """
         if frequency <= 0:
             return
