@@ -36,9 +36,7 @@ class HistoryEntry:
 
 class History:
     """
-    Append-only store of user completion events.
-
-    Append-only store for completion events - the shared learning state.
+    Append-only store of user completion events - the shared learning state.
 
     Design guarantees:
         - Entries are immutable once recorded
@@ -101,7 +99,7 @@ class History:
             - This operation is append-only.
             - Callers should treat History as write-once per event.
             - Prefix and value are coerced to strings to enforce
-              persistence and serialization invariants.
+              persistence and serialisation invariants.
         """
         if timestamp is None:
             timestamp = datetime.now(timezone.utc)

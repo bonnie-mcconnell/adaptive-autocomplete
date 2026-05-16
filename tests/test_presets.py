@@ -75,6 +75,27 @@ def test_bktree_preset_is_accessible_directly() -> None:
     results = engine.suggest("hel")
     assert len(results) > 0, "bktree preset must produce suggestions for 'hel'"
     assert "hello" in results or "help" in results or "here" in results
+
+
+def test_engine_describe_history_entries_accurate() -> None:
+    """describe()['history_entries'] must reflect the true count of recorded selections.
+
+    Validates O(1) access: describe() uses len(self._history) via
+    History.__len__, which reads len(self._entries) directly without
+    allocating a tuple copy.
+
+    Tests accumulation across multiple prefixes - not just a single increment.
+    """
+    engine = get_preset("stateless").build(None, _SMALL_VOCAB)
+
+    assert engine.describe()["history_entries"] == 0
+
+    engine.record_selection("pr", "program")
+    assert engine.describe()["history_entries"] == 1
+
+    engine.record_selection("pr", "programming")
+    engine.record_selection("hel", "hello")
+    assert engine.describe()["history_entries"] == 3
     """describe()['history_entries'] must reflect the true count of recorded selections.
 
     Validates O(1) access: describe() now uses len(self._history) via

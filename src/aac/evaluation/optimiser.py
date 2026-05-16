@@ -193,13 +193,12 @@ class WeightOptimiser:
         ranker instances (their type and config) and re-instantiate them cheaply
         per evaluation with a fresh History, avoiding the expensive index rebuild.
         """
-        cache_key = f"{base_preset}:rankers"
-        if cache_key not in self._ranker_cache:
+        if base_preset not in self._ranker_cache:
             from aac.domain.history import History
             from aac.presets import get_preset
             tmp_engine = get_preset(base_preset).build(History(), None)
-            self._ranker_cache[cache_key] = list(tmp_engine._rankers)
-        return self._ranker_cache[cache_key]
+            self._ranker_cache[base_preset] = list(tmp_engine._rankers)
+        return self._ranker_cache[base_preset]
 
     def _rebuild_rankers_for_history(
         self,
@@ -233,18 +232,22 @@ class WeightOptimiser:
                     ),
                     weight=cfg["weight"],
                 ))
-            elif isinstance(template, LearningRanker):
+            elif isinstance(template, LearningRanker):  # pragma: no cover
+                # No current built-in preset uses LearningRanker as its ranker;
+                # all presets use ScoreRanker + optional DecayRanker. This branch
+                # is retained for forward-compatibility: if a future preset adds
+                # LearningRanker, it will work correctly without a code change.
                 cfg = template.ranker_config()
                 fresh_rankers.append(LearningRanker(
                     history=history,
                     boost=cfg["boost"],
                     dominance_ratio=cfg["dominance_ratio"],
                 ))
-            else:
+            else:  # pragma: no cover
                 # Unknown ranker type - fall back to reusing the template.
-                # Stateless rankers are safe to share; History-bound ones
-                # will read stale data but this branch only fires for
-                # user-defined custom rankers not handled above.
+                # Stateless rankers (e.g. custom scoring functions) are safe
+                # to share across evaluations; History-bound ones will read
+                # stale data, but users of custom rankers accept this risk.
                 fresh_rankers.append(template)
 
         return fresh_rankers

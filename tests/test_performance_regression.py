@@ -155,9 +155,14 @@ class TestPerformanceRegression:
                 f"suggest={avg_suggest:.2f}ms, suggest_full={avg_full:.2f}ms. "
                 f"Check suggest_full() is not running the pipeline twice."
             )
+
+    def test_suggest_with_history_within_3x_suggest(self) -> None:
         """
         suggest_with_history() adds one counts_for_prefix() call vs suggest().
         It must not be more than 3x slower (the extra call is O(k), not O(n)).
+
+        This test was previously orphaned as dead code inside
+        test_suggest_full_within_2x_suggest after its def line was dropped.
         """
         engine = create_engine("production")
         for i in range(20):

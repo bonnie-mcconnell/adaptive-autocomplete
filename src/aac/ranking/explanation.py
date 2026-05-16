@@ -62,7 +62,7 @@ class RankingExplanation:
 
     def to_dict(self) -> dict[str, float | str | dict[str, float]]:
         """
-        JSON-serializable representation.
+        JSON-serialisable representation.
         """
         return asdict(self)
 
@@ -86,8 +86,9 @@ class RankingExplanation:
         if self.value != other.value:
             raise ValueError("Cannot merge explanations for different values")
 
-        # 'source' from the first explanation is preserved - the merge
-        # Component maps capture multi-ranker contributions.
+        # 'source' from the first explanation is preserved.
+        # base_components and history_components from both are merged so the
+        # result reflects every ranker's contribution.
 
         merged_base = self.base_score + other.base_score
         merged_boost = self.history_boost + other.history_boost

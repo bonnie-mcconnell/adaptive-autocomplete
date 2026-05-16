@@ -60,9 +60,7 @@ class CompletionContext:
 
 @dataclass(frozen=True)
 class Suggestion:
-    """
-    A candidate completion.
-    """
+    """A candidate completion returned by a predictor."""
 
     value: str
 
@@ -106,7 +104,7 @@ class PredictorExplanation:
     Explanation produced by a single predictor.
 
     Represents a raw signal before any ranking,
-    normalization, or aggregation occurs.
+    normalisation, or aggregation occurs.
     """
 
     value: str
@@ -149,7 +147,7 @@ class WeightedPredictor:
 
 def ensure_context(ctx: CompletionContext | str) -> CompletionContext:
     """
-    Normalizes raw text or CompletionContext into CompletionContext.
+    Normalises raw text or CompletionContext into CompletionContext.
     """
     if isinstance(ctx, CompletionContext):
         return ctx

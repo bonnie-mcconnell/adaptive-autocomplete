@@ -2,16 +2,20 @@
 Coverage for remaining gaps in engine.py.
 
 Tests target the following uncovered lines:
-  125, 142  - construction-time History divergence errors
+  125, 142  - construction-time History divergence errors (different History instances)
   240-242   - ranker invariant violation (modified suggestion set)
-  271       - non-finite score guard
-  419       - contribution_pct empty path in explain()
-  582       - non-dominant confidence branch in describe()
-  658       - non-dominant confidence branch in suggest_with_confidence()
+  271       - non-finite score guard (NaN or Inf from a ranker)
+  419       - contribution_pct={} when final_score is near zero
+  582       - dominant confidence path in suggest_full() (rank-decay formula)
+  658       - dominant confidence path in suggest_with_confidence() (rank-decay formula)
   788       - batch_suggest()
   815-819   - batch_explain()
   849-851   - batch_suggest_async()
+  908, 920  - describe() non-preset label paths
   943       - suggest_full() method
+
+Lines 584 and 660 (the non-dominant score-normalisation branches) are already
+covered by tests in test_suggest_api.py where score ratios are ~1.05x.
 """
 from __future__ import annotations
 
@@ -25,7 +29,7 @@ from aac.domain.types import (
     Suggestion,
     WeightedPredictor,
 )
-from aac.engine.engine import AutocompleteEngine
+from aac.engine.engine import _RANK_DECAY_RATE, AutocompleteEngine
 from aac.predictors.frequency import FrequencyPredictor
 from aac.ranking.base import Ranker
 from aac.ranking.explanation import RankingExplanation
@@ -53,39 +57,6 @@ def _learning_engine(history: History | None = None) -> tuple[AutocompleteEngine
         history=h,
     )
     return engine, h
-
-
-def _make_no_op_ranker() -> Ranker:
-    """
-    Minimal concrete Ranker that passes suggestions through unchanged.
-
-    Ranker is an ABC requiring both rank() and explain(). Any test ranker
-    must implement both to be instantiable. We use this as a base for
-    test doubles rather than repeating the boilerplate.
-    """
-    class _PassThrough(Ranker):
-        def rank(
-            self,
-            prefix: str,
-            suggestions: Sequence[ScoredSuggestion],
-        ) -> list[ScoredSuggestion]:
-            return list(suggestions)
-
-        def explain(
-            self,
-            prefix: str,
-            suggestions: Sequence[ScoredSuggestion],
-        ) -> list[RankingExplanation]:
-            return [
-                RankingExplanation.from_predictor(
-                    value=s.suggestion.value,
-                    score=s.score,
-                    source="passthrough",
-                )
-                for s in suggestions
-            ]
-
-    return _PassThrough()
 
 
 # ===========================================================================
@@ -212,7 +183,8 @@ class TestNonFiniteScoreGuard:
     (NaN or ±Inf) score (line 271).
     """
 
-    def _engine_with_ranker(self, ranker: Ranker) -> AutocompleteEngine:
+    @staticmethod
+    def _engine_with_ranker(ranker: Ranker) -> AutocompleteEngine:
         return AutocompleteEngine(
             predictors=[WeightedPredictor(FrequencyPredictor(_VOCAB), weight=1.0)],
             ranker=[ranker],
@@ -315,23 +287,25 @@ class TestExplainContributionPctEmpty:
         )
 
         explanations = engine.explain("he")
-        assert len(explanations) > 0
+        assert len(explanations) > 0, "Engine must produce explanations for prefix 'he'"
 
-        near_zero = [e for e in explanations if abs(e.final_score) < 1e-12]
-        if near_zero:
-            assert near_zero[0].contribution_pct == {}, (
-                "Near-zero final_score must produce empty contribution_pct"
+        # Every explanation has final_score=1e-15, which is below the 1e-12 threshold
+        # at engine.py line 412. contribution_pct={} is therefore guaranteed for all.
+        for exp in explanations:
+            assert exp.contribution_pct == {}, (
+                f"final_score={exp.final_score} is below 1e-12 threshold; "
+                f"contribution_pct must be empty, got {exp.contribution_pct}"
             )
 
 
 # ===========================================================================
-# describe() (line 582 path via suggest_with_confidence, and line 658)
+# describe() API (lines 908, 920 - non-preset label paths)
 # ===========================================================================
 
 class TestDescribeMethod:
     """
     describe() returns a typed dict of engine configuration.
-    It takes no arguments (not even a prefix).
+    It takes no arguments - it describes the engine itself, not a query.
     """
 
     def test_describe_returns_expected_keys(self) -> None:
@@ -358,37 +332,104 @@ class TestDescribeMethod:
         assert engine.describe()["history_entries"] == 1
 
 
-class TestSuggestWithConfidenceNonDominant:
+# ===========================================================================
+# Dominant confidence path (lines 582, 658)
+#
+# Line 582 = `confidence = 1.0 / (1.0 + k * _RANK_DECAY_RATE)` in suggest_full()
+# Line 658 = same formula in suggest_with_confidence()
+# Both only execute when is_dominant=True (top_score/second_score > 4.0).
+# The non-dominant else-branches (lines 584, 660) are already covered by the
+# stateless engine tests in test_suggest_api.py (score ratio ~1.05x).
+# ===========================================================================
+
+def _dominant_engine() -> tuple[AutocompleteEngine, History]:
     """
-    suggest_with_confidence() non-dominant branch (line 658).
-    When score spread is flat, confidence normalises by max score.
+    Engine where the top suggestion score dominates by >4x.
+
+    Uses a 10000:1 vocabulary skew with a high-boost LearningRanker (200
+    recorded selections, boost=20.0). Produces top/second ≈ 26.6 > 4.0,
+    verified against the production constants before writing these tests.
+    """
+    vocab = {"hello": 10000, "help": 1}
+    h = History()
+    for _ in range(200):
+        h.record("he", "hello")
+    engine = AutocompleteEngine(
+        predictors=[WeightedPredictor(FrequencyPredictor(vocab), weight=1.0)],
+        ranker=[ScoreRanker(), LearningRanker(history=h, boost=20.0)],
+        history=h,
+    )
+    return engine, h
+
+
+class TestDominantConfidencePath:
+    """
+    Tests for the dominant-confidence rank-decay path in suggest_full() (line 582)
+    and suggest_with_confidence() (line 658).
+
+    When top_score / second_score > _DOMINANCE_THRESHOLD (4.0), raw score
+    normalisation would collapse all non-top confidences toward zero.
+    The engine switches to rank-decay: position k → 1/(1 + k * _RANK_DECAY_RATE).
     """
 
-    def test_returns_unit_interval_confidences(self) -> None:
-        engine = _basic_engine()
-        results = engine.suggest_with_confidence("he")
-        assert len(results) > 0
-        for word, conf in results:
-            assert isinstance(word, str)
-            assert 0.0 <= conf <= 1.0, f"confidence for '{word}' is {conf}"
+    def test_suggest_full_dominant_path_uses_rank_decay(self) -> None:
+        """
+        suggest_full() with a dominant top result must use rank-decay (line 582).
 
-    def test_two_equal_predictors_produce_valid_confidences(self) -> None:
+        Verification: with rank-decay, confidence[1] = 1/(1 + 1*_RANK_DECAY_RATE).
+        With score-normalisation it would equal second_score/top_score ≈ 0.038.
+        The two formulas produce clearly distinct values; we assert the exact
+        rank-decay value to confirm the correct branch executed.
         """
-        Two equal-weight predictors with identical scores produce a flat
-        distribution - the non-dominant path normalises by max score.
-        """
-        engine = AutocompleteEngine(
-            predictors=[
-                WeightedPredictor(FrequencyPredictor(_VOCAB), weight=1.0),
-                WeightedPredictor(FrequencyPredictor(_VOCAB), weight=1.0),
-            ],
-            ranker=None,
-            history=None,
+        engine, _ = _dominant_engine()
+        results = engine.suggest_full("he")
+
+        assert len(results) >= 2, "Dominant engine must return at least 2 results"
+        assert results[0]["confidence"] == pytest.approx(1.0)
+
+        expected_second = 1.0 / (1.0 + 1 * _RANK_DECAY_RATE)
+        assert results[1]["confidence"] == pytest.approx(expected_second, rel=1e-3), (
+            f"Dominant path must use rank-decay 1/(1+{_RANK_DECAY_RATE})="
+            f"{expected_second:.4f}, got {results[1]['confidence']:.4f}"
         )
+
+    def test_suggest_with_confidence_dominant_path_uses_rank_decay(self) -> None:
+        """
+        suggest_with_confidence() with a dominant top result must use rank-decay
+        (line 658). Same contract as suggest_full() but different method.
+        """
+        engine, _ = _dominant_engine()
         results = engine.suggest_with_confidence("he")
-        assert len(results) > 0
-        for _, conf in results:
-            assert 0.0 <= conf <= 1.0
+
+        assert len(results) >= 2
+        assert results[0][1] == pytest.approx(1.0)
+
+        expected_second = 1.0 / (1.0 + 1 * _RANK_DECAY_RATE)
+        assert results[1][1] == pytest.approx(expected_second, rel=1e-3), (
+            f"Dominant path must use rank-decay, got {results[1][1]:.4f}, "
+            f"expected {expected_second:.4f}"
+        )
+
+    def test_non_dominant_engine_uses_score_normalisation(self) -> None:
+        """
+        With a balanced vocabulary (score ratio ~1.06x, well below 4.0 threshold),
+        suggest_with_confidence() must use score normalisation (lines 660, 584).
+
+        The two regimes produce distinct confidence distributions.
+        Score-normalised: second_conf ≈ second_score/top_score ≈ 0.95.
+        Rank-decay: second_conf = 1/(1 + _RANK_DECAY_RATE) ≈ 0.71.
+        We assert second_conf > 0.9 to confirm score-normalisation, not rank-decay.
+        """
+        engine = _basic_engine()
+        # "w" prefix: world(200) vs word(150), ratio = log(200)/log(150) ≈ 1.06
+        results = engine.suggest_with_confidence("w")
+
+        assert len(results) >= 2
+        assert results[0][1] == pytest.approx(1.0)
+        assert results[1][1] > 0.9, (
+            f"Non-dominant engine must use score normalisation; "
+            f"second confidence {results[1][1]:.4f} should be > 0.9"
+        )
 
 
 # ===========================================================================
@@ -501,7 +542,46 @@ class TestSuggestFull:
         assert len(results) <= 2
 
     def test_suggest_full_empty_prefix_returns_empty(self) -> None:
+        """
+        suggest_full("") must return [] because CompletionContext("").prefix()
+        returns "" (no tokens to split), and FrequencyPredictor indexes words
+        by prefix length >= 1, so no bucket exists for "".
+
+        This is a documented consequence of CompletionContext.prefix():
+            "parts[-1].lower() if parts else ''"
+        The empty-string contract is stable: returning completions for "" would
+        mean returning the full vocabulary, which is not useful.
+        """
         engine = _basic_engine()
-        results = engine.suggest_full("")
-        assert results == []
+        assert engine.suggest_full("") == []
+
+
+# ===========================================================================
+# debug_state() - developer introspection method (lines 743-746)
+# ===========================================================================
+
+class TestDebugMethod:
+    """
+    debug() is an internal developer-only method documented as "NOT a
+    stable API". We don't assert on its exact structure (it may change) but
+    we do assert it doesn't crash and returns the four documented keys.
+
+    A crash in a debug method during an incident investigation is the worst
+    possible time to discover it's broken.
+    """
+
+    def test_debug_state_returns_expected_keys(self) -> None:
+        engine = _basic_engine()
+        state = engine.debug(text="he")
+
+        assert "input" in state
+        assert "scored" in state
+        assert "ranked" in state
+        assert "suggestions" in state
+
+    def test_debug_state_suggestions_match_suggest(self) -> None:
+        """debug() suggestions must match suggest() output."""
+        engine = _basic_engine()
+        state = engine.debug(text="he")
+        assert state["suggestions"] == engine.suggest("he")
 

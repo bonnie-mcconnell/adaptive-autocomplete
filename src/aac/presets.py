@@ -293,6 +293,7 @@ def _bktree_engine(
         history=history,
     )
 
+
 def _production_engine(
     history: History | None,
     vocabulary: Mapping[str, int] | None = None,

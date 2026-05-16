@@ -31,6 +31,7 @@ Design notes
 from __future__ import annotations
 
 import statistics
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -300,7 +301,6 @@ def _breakdown_by_length(
     Useful for understanding whether short prefixes (hard, many candidates)
     or long prefixes (easy, few candidates) are dragging down the aggregate.
     """
-    from collections import defaultdict
     buckets: dict[int, list[QueryResult]] = defaultdict(list)
 
     for qr in query_results:
@@ -310,7 +310,7 @@ def _breakdown_by_length(
     breakdown: dict[int, dict[str, float]] = {}
     for length, results in sorted(buckets.items()):
         breakdown[length] = {
-            "n": len(results),
+            "n": float(len(results)),
             "mrr": statistics.mean(r.mrr for r in results),
             "ndcg": statistics.mean(r.ndcg for r in results),
             "hit_rate": sum(1 for r in results if r.hit) / len(results),

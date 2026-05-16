@@ -11,7 +11,8 @@ metrics.py
 harness.py
   - best_queries() (line 141), n_queries property (line 187),
     k property (line 192), from_history() return path (line 229),
-    run() empty-log RuntimeError (line 272)
+    constructor empty-log ValueError (line 171-175),
+    run() with zero-MRR prefix (verifies no-raise on no-match)
 
 datasets.py
   - QueryLogEntry empty-prefix validation (line 50),
@@ -47,18 +48,21 @@ from aac.evaluation.metrics import average_precision, ndcg_at_k
 from aac.evaluation.optimiser import OptimisationResult, WeightOptimiser
 
 # ---------------------------------------------------------------------------
-# Shared fixtures
+# Module-level constants (computed once at import time, not per test)
 # ---------------------------------------------------------------------------
 
-def _small_vocab() -> list[str]:
-    """50 words - enough for meaningful evaluation without slow index builds."""
+def _build_small_vocab() -> list[str]:
+    """Load the 50 most frequent English words for use as test vocabulary."""
     from aac.data import load_english_frequencies
     return list(load_english_frequencies().keys())[:50]
 
 
+_SMALL_VOCAB: list[str] = _build_small_vocab()
+
+
 def _make_harness(prefix_lengths: list[int] | None = None) -> EvaluationHarness:
     log = make_synthetic_query_log(
-        _small_vocab(),
+        _SMALL_VOCAB,
         prefix_lengths=prefix_lengths or [2, 3],
     )
     return EvaluationHarness(log, k=5)
@@ -172,7 +176,7 @@ class TestEvaluationHarnessProperties:
         progress. An incorrect count would produce misleading time estimates
         in verbose mode.
         """
-        log = make_synthetic_query_log(_small_vocab(), prefix_lengths=[2])
+        log = make_synthetic_query_log(_SMALL_VOCAB, prefix_lengths=[2])
         harness = EvaluationHarness(log, k=5)
         assert harness.n_queries == len(log), (
             f"n_queries must equal len(log), got {harness.n_queries} vs {len(log)}"
@@ -186,7 +190,7 @@ class TestEvaluationHarnessProperties:
         not comparable. Exposing it as a property lets callers verify they
         are using the harness they intended.
         """
-        log = make_synthetic_query_log(_small_vocab(), prefix_lengths=[2])
+        log = make_synthetic_query_log(_SMALL_VOCAB, prefix_lengths=[2])
         harness = EvaluationHarness(log, k=7)
         assert harness.k == 7
 
@@ -412,7 +416,8 @@ class TestWeightOptimiserVerbosePaths:
     don't crash on unexpected types.
     """
 
-    def _run_grid_verbose(self) -> str:
+    @staticmethod
+    def _run_grid_verbose() -> str:
         harness = _make_harness()
         opt = WeightOptimiser(harness, metric="mrr", verbose=True)
         buf = io.StringIO()
@@ -423,7 +428,8 @@ class TestWeightOptimiserVerbosePaths:
             )
         return buf.getvalue()
 
-    def _run_coordinate_verbose(self) -> str:
+    @staticmethod
+    def _run_coordinate_verbose() -> str:
         harness = _make_harness()
         opt = WeightOptimiser(harness, metric="mrr", verbose=True)
         buf = io.StringIO()
@@ -454,7 +460,11 @@ class TestWeightOptimiserVerbosePaths:
         The first call to grid_search with a new preset must print the
         'Building ... preset indexes' message (lines 179, 185).
 
-        On the second call, the cache is warm and this branch is skipped.
+        On the second call, the cache is warm and the build branch is skipped.
+
+        We assert "Building" specifically - not `"Building" or "stateless"`.
+        The `or` fallback was vacuously true (stateless appears in every line)
+        and would pass even if "Building" was never printed.
         """
         harness = _make_harness()
         opt = WeightOptimiser(harness, metric="mrr", verbose=True)
@@ -463,11 +473,11 @@ class TestWeightOptimiserVerbosePaths:
         with redirect_stdout(buf):
             opt.grid_search("stateless", {"frequency": [1.0]})
         first_output = buf.getvalue()
-        assert "Building" in first_output or "stateless" in first_output, (
-            f"Expected index-build message on first call:\n{first_output}"
+        assert "Building" in first_output, (
+            f"Expected 'Building ... preset indexes' message on first call, got:\n{first_output}"
         )
 
-        # Second call: cache is warm, no 'Building' message
+        # Second call: cache is warm, 'Building' message must not appear
         buf2 = io.StringIO()
         with redirect_stdout(buf2):
             opt.grid_search("stateless", {"frequency": [1.0]})
@@ -514,13 +524,15 @@ class TestWeightOptimiserVerbosePaths:
             f"Expected convergence message when no improvement possible:\n{output}"
         )
 
-    def test_coordinate_descent_verbose_new_best_message(self) -> None:
+    def test_coordinate_descent_verbose_round_header_printed(self) -> None:
         """
-        When coordinate_descent finds an improvement, it must print the
-        'Round N [predictor]: ...' message (lines 440-452).
+        coordinate_descent must print 'Round N' progress headers (lines 440-448)
+        for each round that runs.
 
-        We use a wide weight grid to maximise the chance that some weight
-        differs from the default and improves (or changes) the score.
+        Previous version asserted only `len(output) > 0`, which was a tautology
+        guaranteed by the header test already passing. This test verifies the
+        per-round output specifically: the 'Round N' line that appears at the
+        start of each coordinate descent round and carries the weight being tried.
         """
         harness = _make_harness()
         opt = WeightOptimiser(harness, metric="mrr", verbose=True)
@@ -532,10 +544,9 @@ class TestWeightOptimiserVerbosePaths:
                 max_rounds=2,
             )
         output = buf.getvalue()
-        # Either found a new best (Round N [...]) or converged immediately -
-        # both are valid. What we verify is that the output is non-empty
-        # and contains the header (already tested), meaning verbose code ran.
-        assert len(output) > 0
+        assert "Round" in output, (
+            f"Expected 'Round N' per-round header in verbose coordinate_descent output:\n{output}"
+        )
 
 
 class TestOptimiserLearningRankerRebuild:
@@ -595,3 +606,22 @@ class TestOptimiserLearningRankerRebuild:
 
         assert isinstance(result, OptimisationResult)
         assert result.n_evaluations >= 1
+
+
+class TestPublicAPIExports:
+    """Regression tests for public API surface completeness."""
+
+    def test_average_precision_importable_from_top_level(self) -> None:
+        """average_precision must be importable from aac.evaluation directly.
+
+        Regression test: it was previously only accessible via
+        aac.evaluation.metrics, which is an internal submodule.
+        """
+        from aac.evaluation import average_precision  # noqa: PLC0415
+        assert callable(average_precision)
+
+    def test_all_metric_functions_in_evaluation_all(self) -> None:
+        """All public metric functions must appear in aac.evaluation.__all__."""
+        import aac.evaluation as ev
+        for name in ("precision_at_k", "recall_at_k", "mrr_at_k", "ndcg_at_k", "average_precision"):
+            assert name in ev.__all__, f"{name!r} missing from aac.evaluation.__all__"
