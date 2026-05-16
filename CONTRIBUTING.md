@@ -18,18 +18,19 @@ poetry run aac suggest he
 ## Development workflow
 
 ```bash
-make test-fast  # unit tests only - fast, no subprocess overhead (~30s)
-make test       # full suite including integration tests (~90s)
+make test-fast  # fast subset: skips integration, property-based, and perf tests
+make test       # full suite including integration and property-based tests
 make lint       # ruff check
 make typecheck  # mypy --strict
-make check      # lint + typecheck + full test suite (run before every commit)
+make check      # lint + typecheck + full test suite (run before every PR)
 make pre-commit # run all pre-commit hooks against all files
 ```
 
 Integration tests are marked with `@pytest.mark.integration` and invoke the
 CLI as a subprocess. They are slow but exercise the full stack end-to-end.
-Run them before opening a PR. CI runs unit tests on every push and the full
-suite on every pull request.
+Run them before opening a PR. CI runs the fast subset on every push and the
+full suite (including integration tests) on every pull request. Performance
+regression tests run in their own dedicated CI step on ubuntu/3.12 only.
 
 ## Adding a predictor
 

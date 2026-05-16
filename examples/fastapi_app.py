@@ -24,6 +24,7 @@ GET /suggest calls within the same process, and survive restarts.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 from pathlib import Path
@@ -186,7 +187,6 @@ async def explain(
     engine = get_engine()
     # explain_as_dicts() is synchronous. Run in a thread to avoid blocking
     # the event loop, consistent with the engine's async API pattern.
-    import asyncio
     results = await asyncio.to_thread(engine.explain_as_dicts, q)
     return results[:limit]
 

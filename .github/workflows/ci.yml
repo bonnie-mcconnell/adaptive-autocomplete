@@ -56,9 +56,9 @@ jobs:
         if: github.event_name == 'push'
         run: poetry run pytest -m "not integration" --ignore=tests/test_performance_regression.py --ignore=tests/test_property_based.py
 
-      - name: Full test suite including integration tests (pull request)
+      - name: Full test suite with integration tests, excluding perf regression (pull request)
         if: github.event_name == 'pull_request'
-        run: poetry run pytest
+        run: poetry run pytest --ignore=tests/test_performance_regression.py
 
       # Performance regression gate: runs separately from the unit test suite
       # so a regression produces a clearly labelled CI failure, not a buried
@@ -68,19 +68,22 @@ jobs:
       # so this catches catastrophic regressions without being fragile.
       - name: Performance regression tests
         if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
-        run: poetry run pytest tests/test_performance_regression.py -v
+        run: poetry run pytest tests/test_performance_regression.py -v --no-cov
 
       # Benchmark: report numbers to CI log and artifact for trend tracking.
-      # This is informational only - failures here do not block merge.
-      # Hard latency gates are enforced by the regression tests above.
+      # Informational only - failures do not block merge. Hard latency gates
+      # are enforced by the performance regression tests above.
       - name: Benchmark (numbers only - informational)
         if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
         run: poetry run python -m aac.benchmarks.benchmark_engine | tee benchmark_results.txt
 
       - name: Upload benchmark results
         if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results-${{ github.sha }}
           path: benchmark_results.txt
+          if-no-files-found: warn
           retention-days: 90

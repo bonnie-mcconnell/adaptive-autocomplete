@@ -14,11 +14,11 @@ from aac.presets import create_engine
 engine = create_engine("production")
 
 engine.suggest("programing")
-# → ['programming', 'program', 'programs', ...]
+# → ['programming']   # SymSpell finds the 1-deletion correction
 
 engine.record_selection("programing", "programming")
 engine.suggest("programing")
-# → ['programming', ...]   # boosted by history
+# → ['programming']   # same result, now history-boosted to the top
 
 engine.explain("programing")[0]
 # RankingExplanation(value='programming', base=1.65, boost=+1.50, final=3.15)
@@ -28,14 +28,14 @@ engine.explain("programing")[0]
 
 ## How it works
 
-**Prediction and ranking are separate layers.** Predictors are stateless: they take a prefix and return scored candidates. Rankers are stateful: they reorder candidates based on history and recency. The seam exists because the original monolithic function was untestable - writing a learning test required mocking the full prediction pipeline.
+**Prediction and ranking are separate layers.** Predictors are read-only with respect to history: they take a prefix and return scored candidates but never write to `History`. Rankers are read-write: they reorder candidates based on history and recency, and the engine records selections back into `History`. The seam exists because the original monolithic function was untestable - writing a learning test required mocking the full prediction pipeline.
 
 ```
 text input
     ↓
 CompletionContext   - lowercases and normalises prefix
     ↓
-Predictors         - frequency, history, symspell, trigram (stateless)
+Predictors         - frequency (stateless), history (read-only), symspell (stateless), trigram (stateless)
     ↓
 Weighted sum       - additive, configurable per predictor
     ↓
@@ -56,7 +56,7 @@ Suggestions + explanations
 
 ## Typo recovery
 
-Three approximate-match predictors, all sharing the same scoring formula from `predictors/_scoring.py`:
+Three approximate-match predictors, all sharing the same scoring formula (defined in the internal `predictors/_scoring.py` module, not part of the public API):
 
 ```
 score = (base / (1 + edit_distance)) * (1 + 0.5 * log_freq_score)
@@ -76,15 +76,22 @@ Distance is dominant. The frequency multiplier orders words within each distance
 
 ```python
 from aac.evaluation import EvaluationHarness, WeightOptimiser
+from aac.evaluation.datasets import make_synthetic_query_log
+from aac.data import load_english_frequencies
+
+vocab = list(load_english_frequencies().keys())
+query_log = make_synthetic_query_log(vocab, prefix_lengths=[2, 3, 4])
 
 harness = EvaluationHarness(query_log)
-opt = WeightOptimiser(harness)
+opt = WeightOptimiser(harness, verbose=False)
 
 result = opt.coordinate_descent(
     "production",
     weight_grid={"frequency": [0.5, 1.0, 2.0], "symspell": [0.3, 0.5, 1.0]},
 )
 print(result.best_weights)
+# → {'frequency': 2.0, 'symspell': 0.3, 'history': 1.2, 'trigram': 0.4}
+# (exact values depend on vocabulary and query distribution)
 ```
 
 Predictor indexes are built once per preset and cached. Only weight wrappers are recreated per evaluation. For the production preset (SymSpell takes ~5s to build), this reduces 27 evaluations from ~135s to ~0.05s.
@@ -98,6 +105,11 @@ Two strategies: **grid search** (exhaustive, optimal on the grid, practical for 
 `History` is not thread-safe. For multi-threaded servers, pass `thread_safe=True`:
 
 ```python
+from pathlib import Path
+from aac.presets import create_engine
+from aac.storage.json_store import JsonHistoryStore
+
+store = JsonHistoryStore(Path.home() / ".aac_history.json")
 engine = create_engine("production", history=store.load(), thread_safe=True)
 # engine.history is now ThreadSafeHistory - safe from any number of threads.
 ```
@@ -105,8 +117,11 @@ engine = create_engine("production", history=store.load(), thread_safe=True)
 Or construct `ThreadSafeHistory` directly if you need the reference before building the engine:
 
 ```python
+from pathlib import Path
 from aac.domain.thread_safe_history import ThreadSafeHistory
+from aac.storage.json_store import JsonHistoryStore
 
+store = JsonHistoryStore(Path.home() / ".aac_history.json")
 history = ThreadSafeHistory(store.load())
 engine = create_engine("production", history=history)
 ```
@@ -126,8 +141,8 @@ source .venv/bin/activate   # Linux/macOS
 # .venv\Scripts\activate    # Windows PowerShell
 
 make demo          # interactive browser demo (first run takes ~5s while SymSpell index builds)
-make test-fast     # unit tests, ~30s
-make test          # full suite, ~3 min
+make test-fast     # fast unit tests (skips integration, property-based, and perf)
+make test          # full suite including integration and property-based tests
 make benchmark     # latency numbers
 ```
 
@@ -144,10 +159,10 @@ make demo-docker   # opens at http://localhost:5000
 | Preset | Predictors | Ranker | Use when |
 |---|---|---|---|
 | `stateless` | frequency | score | no history, fast |
-| `default` | frequency, history | learning | learning, no decay |
-| `recency` | frequency, history | decay | recency matters |
-| `production` | frequency, history, adaptive-symspell, trigram | decay | typos + recency |
-| `robust` | frequency, history, symspell | learning | typo recovery only |
+| `default` | frequency, history | score | history-aware, no decay |
+| `recency` | frequency, history | score + decay | recency matters |
+| `production` | frequency, history, symspell, trigram | score + decay | typos + recency |
+| `robust` | frequency, history, symspell | score + decay | typo recovery only |
 
 ```python
 from aac.presets import create_engine, compare_presets
@@ -162,7 +177,7 @@ comparison = compare_presets("programing", presets=["default", "production"])
 
 ## Tests
 
-650+ tests: invariant correctness, IR metrics, evaluation harness, concurrency, async API, CLI integration, and property-based fuzzing with Hypothesis.
+727 tests: invariant correctness, IR metrics, evaluation harness, concurrency, async API, CLI integration, and property-based fuzzing with Hypothesis.
 
 Key coverage:
 

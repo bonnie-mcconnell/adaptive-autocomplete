@@ -8,6 +8,150 @@ evolution of the design as I understood it better.
 
 ---
 
+## [1.0.4] - 2026-05-15
+
+### Fixed
+- Added regression test (`TestPublicAPIExports`) verifying that
+  `average_precision` is importable from `aac.evaluation` and present in
+  `aac.evaluation.__all__`. The previous test suite imported it from the
+  internal `aac.evaluation.metrics` submodule, so the export gap we fixed
+  in 1.0.3 had no test coverage.
+- `Suggestion` docstring used multi-line format with a blank line inside
+  the triple-quote block for a one-sentence description. Collapsed to a
+  single-line docstring, consistent with the style used elsewhere for
+  simple dataclasses.
+- `BENCHMARK.md` referenced Ubuntu 22.04; `ubuntu-latest` in GitHub
+  Actions now resolves to Ubuntu 24.04. Updated.
+
+---
+
+## [1.0.3] - 2026-05-15
+
+### Fixed
+- `aac.evaluation` did not export `average_precision` even though the other
+  four metric functions (`mrr_at_k`, `ndcg_at_k`, `precision_at_k`,
+  `recall_at_k`) were all exported. Users calling `average_precision`
+  directly (e.g. in custom harnesses) had to import from the internal
+  `aac.evaluation.metrics` submodule. Added to `__init__.py` exports and
+  `__all__`.
+- `_breakdown_by_length()` in `harness.py` imported `collections.defaultdict`
+  inside the function body rather than at the module level. Moved to the
+  top-level import block.
+- `_breakdown_by_length()` stored `"n": len(results)` (an `int`) in a dict
+  declared as `dict[int, dict[str, float]]`. Cast to `float` so the type
+  annotation is accurate.
+- `WeightOptimiser._get_cached_ranker_templates()` used `f"{preset}:rankers"`
+  as a key into `_ranker_cache`, a dict separate from `_predictor_cache`.
+  The `:rankers` suffix was pointless (there is no naming collision to avoid)
+  and would cause a key collision if a preset were literally named
+  `"foo:rankers"`. Now uses `base_preset` directly, consistent with the
+  predictor cache key scheme.
+- `History` class docstring opened with two nearly-identical sentences
+  (`"Append-only store of user completion events."` followed immediately by
+  `"Append-only store for completion events - the shared learning state."`).
+  Merged into one.
+- `examples/fastapi_app.py` imported `asyncio` lazily inside the `/explain`
+  endpoint handler rather than at the module top. `asyncio` is stdlib and
+  always available; the lazy import was a leftover from an early draft.
+  Moved to the module-level import block.
+- `scripts/check_version.py` checked only `pyproject.toml` and
+  `src/aac/__init__.py`. The CHANGELOG.md heading is a third source of
+  truth that could drift. Added CHANGELOG version check so all three must
+  agree before CI passes.
+- Clarified in `README.md` that `predictors/_scoring.py` is an internal
+  module not part of the public API, to prevent users from importing it
+  directly.
+- `src/aac/presets.py` was missing a blank line between `_bktree_engine()`
+  and `_production_engine()` (PEP 8 requires two blank lines between
+  top-level definitions).
+
+---
+
+## [1.0.2] - 2026-05-15
+
+### Fixed
+- `aac.predictors` public API (`__all__`) incorrectly exported `_scoring` module
+  internals (`FREQ_WEIGHT`, `build_freq_scores`, `distance_score`, `edit_confidence`).
+  These are implementation helpers shared across distance-based predictors and were
+  never intended as public API - the leading underscore on `_scoring.py` signals as
+  much. They are still importable directly from `aac.predictors._scoring` for any
+  code that relies on them, but are no longer re-exported through `__all__`.
+- `aac/cli/demo.py` had an unnecessary `# noqa: E402` suppression on the
+  `_demo_html` import. The import was placed after the `TYPE_CHECKING` block
+  (and its surrounding comment separators), which triggered ruff's E402 rule
+  spuriously. Moved the import to its correct position in the import block,
+  above the `TYPE_CHECKING` guard, eliminating the suppression.
+- `DESIGN.md` "What I'd change" section described predictor serialisation as
+  "silently drops" unregistered entries - inaccurate since `PredictorRegistry`
+  was added in 1.0.0. Updated to describe the actual behaviour: `KeyError` for
+  unknown predictor names, `ValueError` for unknown ranker names, with accurate
+  description of the remaining `__class__.__name__`-based ranker limitation.
+
+### Added
+- `make release` and `make release-zip` Makefile targets that build clean source
+  archives using `git archive`. Unlike a manual `zip -r`, `git archive` respects
+  `.gitignore` and excludes build artifacts (`__pycache__`, `.coverage`,
+  `.ruff_cache`, `.pyc` files) from the release bundle.
+
+---
+
+## [1.0.1] - 2026-05-13
+
+### Fixed
+- `AutocompleteEngine.to_config()` silently discarded `LearningRanker` parameters
+  (`boost`, `dominance_ratio`) when serialising. Any engine using a non-default
+  `LearningRanker` would reconstruct with `boost=1.0, dominance_ratio=1.0` after
+  a config round-trip. Fixed by adding an explicit `elif isinstance(r, LearningRanker)`
+  branch in `to_config()`, mirroring the existing `DecayRanker` handling.
+- `FrequencyPredictor.add_word()` docstring example showed `engine.predictors[0].add_word()`
+  but `engine.predictors` did not exist as a public attribute. Added
+  `AutocompleteEngine.predictors` property returning a copy of the internal
+  `WeightedPredictor` list. The docstring example is now correct and runnable.
+- `test_performance_regression.py` contained a broken test method
+  (`test_suggest_full_within_2x_suggest`) where a `suggest_with_history` performance
+  test lost its `def` line, leaving the body as dead code inside the wrong test.
+  Extracted into a proper `test_suggest_with_history_within_3x_suggest` method.
+  The CI perf step now collects 5 tests, not 4.
+- CI performance regression step failed with "32% coverage" error because
+  `addopts` in `pyproject.toml` applies `--cov-fail-under=85` to every pytest
+  invocation, including the dedicated perf step that only runs 4-5 tests.
+  Fixed by adding `--no-cov` to the performance step and excluding
+  `test_performance_regression.py` from the PR full-suite run.
+- `json_store.py` Windows-only backup rotation block and unreachable OS error
+  handlers marked `# pragma: no cover` with explanatory comments. Previously
+  dragging down coverage report on Linux CI runs.
+- `EngineConfig.diff()` loop-invariant `RuntimeError` guard marked `# pragma: no cover`.
+  The guard can only fire if the set-union loop invariant is violated, which is
+  impossible through the public API.
+- `evaluation/harness.py` internal `RuntimeError` guard (empty `query_results`
+  after a non-empty log) marked `# pragma: no cover`. Unreachable through the
+  public API because `EvaluationHarness.__init__` rejects empty logs.
+- `evaluation/optimiser.py` `LearningRanker` and unknown-ranker branches in
+  `_rebuild_rankers_for_history` marked `# pragma: no cover`. No built-in preset
+  uses `LearningRanker` as a ranker; these branches exist for forward-compatibility.
+
+### Added
+- `AutocompleteEngine.predictors` property - returns a copy of the engine's
+  `WeightedPredictor` list for runtime inspection and mutation (e.g. calling
+  `FrequencyPredictor.add_word()` without rebuilding the engine).
+- `[tool.coverage.run]` and `[tool.coverage.report]` sections in `pyproject.toml`.
+  `benchmarks/` and `cli/demo.py` excluded from coverage: benchmark code measures
+  wall-clock latency (gated by the dedicated performance regression step);
+  demo code requires a live browser session.
+- 97 new tests across `test_engine_gaps.py`, `test_evaluation_gaps.py`,
+  `test_thread_safe_history.py`, `test_engine_config.py`,
+  `test_frequency_predictor.py`, `test_persistence.py`, `test_presets.py`,
+  and `test_compare_presets.py`. New tests cover: `ThreadSafeHistory` full API
+  including the `source=` constructor and deprecated `snapshot()`; all
+  `FrequencyPredictor.add_word()` branches; `EvaluationHarness` properties and
+  `from_history()` success path; all IR metric guard paths (`ndcg_at_k(k=0)`,
+  zero-IDCG, empty-relevant); `WeightOptimiser` verbose output paths;
+  `AutocompleteEngine` invariant violations (ranker adds/removes candidate,
+  non-finite score, History divergence); dominant confidence path (lines 582, 658)
+  in `suggest_full()` and `suggest_with_confidence()`; all batch APIs.
+
+---
+
 ## [1.0.0] - 2026-05-05
 
 ### Added

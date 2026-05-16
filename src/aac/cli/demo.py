@@ -23,15 +23,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
+from aac.cli._demo_html import _DEMO_HTML
+
 if TYPE_CHECKING:
     from aac.engine.engine import AutocompleteEngine
     from aac.ranking.explanation import RankingExplanation
 
-# ---------------------------------------------------------------------------
-# HTML - lives in _demo_html.py to keep this file readable
-# ---------------------------------------------------------------------------
-
-from aac.cli._demo_html import _DEMO_HTML  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # HTTP request handler

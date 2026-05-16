@@ -11,10 +11,17 @@ The first version was a monolithic function: score predictors, apply history
 boost, sort, return. It was untestable - to write a learning test you had to
 mock the full prediction pipeline, including the bit you were trying to test.
 
-Splitting into stateless `Predictor` and stateful `Ranker` meant I could
+Splitting into read-only `Predictor` and read-write `Ranker` meant I could
 test learning in isolation from prediction. The cost is one extra abstraction
 layer and an explicit contract: rankers may reorder and rescore, but may not
 add or remove candidates. The engine checks this after every ranker step.
+
+I kept calling predictors "stateless" in early drafts, which is only half true.
+`FrequencyPredictor` and the typo predictors are genuinely stateless - same
+prefix, same result, always. `HistoryPredictor` is read-dependent: call it
+twice on the same prefix and you may get different results if `History` grew
+between calls. The invariant I actually care about is write-isolation: no
+predictor ever modifies `History`. That is what the design enforces.
 
 ## Why `__post_init__` for the explanation invariant
 
@@ -106,9 +113,14 @@ would model selection probability directly, something like a contextual bandit.
 That's a real algorithm; this is a workaround that happens to produce sensible
 numbers.
 
-**Serialisation uses class-name heuristics.** `EngineConfig.from_json()`
-reconstructs predictors and rankers by matching stored type names against
-a registry. This works until someone subclasses a predictor without
-registering it, at which point config round-trip silently drops it. The
-correct fix is structured config objects per component rather than name
-strings.
+**Ranker serialisation uses class-name matching.** `EngineConfig.from_json()`
+reconstructs rankers by matching stored type names (`score`, `decay`, `learning`)
+against a fixed dispatch table; an unrecognised name raises `ValueError` rather
+than silently dropping the ranker. Predictor reconstruction uses `PredictorRegistry`,
+which raises `KeyError` for unregistered names and supports third-party registration
+via `PredictorRegistry.register()`. The remaining limitation is that `to_config()`
+derives the ranker's config name from `__class__.__name__` for unknown subclasses,
+so a custom `FancyRanker` round-trips as `"fancy"` - which then raises `ValueError`
+on `build()` unless the subclass is explicitly handled in `config.build()`. The
+fix would be a ranker registry mirroring `PredictorRegistry`, but the current
+behaviour is at least loudly wrong rather than silently wrong.

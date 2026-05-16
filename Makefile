@@ -1,4 +1,4 @@
-.PHONY: install dev-setup demo demo-docker warm test test-fast test-perf benchmark benchmark-save benchmark-diff lint typecheck typecheck-examples pre-commit version-check check all run
+.PHONY: install dev-setup demo demo-docker warm test test-fast test-perf benchmark benchmark-save benchmark-diff lint typecheck typecheck-examples pre-commit version-check check all run release release-zip
 
 # ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -47,15 +47,20 @@ demo-docker:
 test:
 	poetry run pytest
 
-# Fast subset: skip slow integration tests (property-based, persistence).
+# Fast subset: skips @pytest.mark.integration tests (CLI subprocess calls),
+# test_performance_regression.py (timing-sensitive latency gates), and
+# test_property_based.py (Hypothesis fuzzing, thousands of generated inputs).
+# Matches the push-event CI step exactly.
 test-fast:
-	poetry run pytest -m "not integration"
+	poetry run pytest -m "not integration" --ignore=tests/test_performance_regression.py --ignore=tests/test_property_based.py
 
 # Performance regression gate: enforces concrete latency upper bounds.
 # Runs automatically in CI (ubuntu-latest, Python 3.12 only).
 # Run locally before a PR to check you haven't introduced a regression.
+# --no-cov: 5 perf tests alone produce ~32% coverage, triggering the 85%
+# threshold. Coverage is meaningless for timing-only tests.
 test-perf:
-	poetry run pytest tests/test_performance_regression.py -v
+	poetry run pytest tests/test_performance_regression.py -v --no-cov
 
 # Pre-build all preset engine indexes (SymSpell, trigram). Run once after install
 # to avoid the first-call latency spike in compare_presets() and the demo.
@@ -106,3 +111,32 @@ check: lint typecheck test
 # ── Default ──────────────────────────────────────────────────────────────────
 
 all: install check
+
+# ── Release ───────────────────────────────────────────────────────────────────
+
+# Build a clean source distribution using git archive.
+# Unlike 'zip -r', git archive excludes everything in .gitignore:
+# __pycache__, .coverage, .ruff_cache, .pyc files, and build artifacts.
+# Output: adaptive-autocomplete-<version>.tar.gz in the project root.
+#
+# Usage:
+#   make release          # create the archive
+#   make release-zip      # create a .zip instead (e.g. for GitHub releases)
+VERSION := $(shell python -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['tool']['poetry']['version'])")
+
+release:
+	@echo "Building release archive for version $(VERSION)..."
+	git archive HEAD --format=tar.gz \
+		--prefix=adaptive-autocomplete/ \
+		--output=adaptive-autocomplete-$(VERSION).tar.gz
+	@echo "Created adaptive-autocomplete-$(VERSION).tar.gz"
+	@echo "Contents:"
+	@tar -tf adaptive-autocomplete-$(VERSION).tar.gz | head -30
+	@echo "  ..."
+
+release-zip:
+	@echo "Building release zip for version $(VERSION)..."
+	git archive HEAD --format=zip \
+		--prefix=adaptive-autocomplete/ \
+		--output=adaptive-autocomplete-$(VERSION).zip
+	@echo "Created adaptive-autocomplete-$(VERSION).zip"

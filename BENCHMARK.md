@@ -1,7 +1,7 @@
 # Benchmarks
 
 Latency numbers for `aac` on the bundled 48k-word English vocabulary.
-All figures are wall-clock time measured on Ubuntu 22.04, Python 3.12,
+All figures are wall-clock time measured on Ubuntu 24.04, Python 3.12,
 single core, no warm-up discarded. Numbers are p50 / p95 / p99 across
 10,000 calls per preset.
 

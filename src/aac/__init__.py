@@ -19,7 +19,7 @@ See https://github.com/bonnie-mcconnell/adaptive-autocomplete for full docs.
 from aac.domain.thread_safe_history import ThreadSafeHistory
 from aac.vocabulary import vocabulary_from_file, vocabulary_from_text, vocabulary_from_wordlist
 
-__version__ = "1.0.0"
+__version__ = "1.0.4"
 __author__ = "Bonnie McConnell"
 __license__ = "MIT"
 __all__ = ["__version__", "__author__", "__license__", "ThreadSafeHistory", "vocabulary_from_file", "vocabulary_from_text", "vocabulary_from_wordlist"]

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "adaptive-autocomplete"
-version = "1.0.0"
+version = "1.0.4"
 description = "Autocomplete engine built from scratch: pluggable predictors, explainable ranking, offline evaluation, and weight optimisation. Zero required dependencies."
 license = "MIT"
 authors = ["Bonnie McConnell <bonniep.mcconnell@gmail.com>"]
@@ -119,6 +119,7 @@ exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
+    "@overload",
 ]
 
 [build-system]
