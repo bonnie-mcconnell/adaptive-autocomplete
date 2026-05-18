@@ -1,26 +1,8 @@
 """
-FastAPI autocomplete endpoint using adaptive-autocomplete.
+FastAPI integration: persistent history, thread-safe recording, async endpoints.
 
-This example shows how to wire the engine into a real async web service:
-persistent history across restarts, thread-safe recording, and async
-suggest/explain endpoints that don't block the event loop.
-
-Install extras:
-    pip install adaptive-autocomplete fastapi uvicorn
-
-Run:
+    pip install fastapi uvicorn
     uvicorn examples.fastapi_app:app --reload
-
-Endpoints:
-    GET /suggest?q=prog&limit=10     → ["programming", "program", ...]
-    GET /explain?q=prog&limit=5      → [{value, base, boost, final}, ...]
-    GET /batch?q=prog&q=hel&q=wor   → {"prog": [...], "hel": [...], "wor": [...]}
-    POST /record?q=prog&value=programming  → {"recorded": true}
-    GET /health                       → {"status": "ok", "history_entries": N}
-
-The engine loads persisted history on startup and saves it on shutdown.
-Selections recorded via POST /record are visible immediately in subsequent
-GET /suggest calls within the same process, and survive restarts.
 """
 from __future__ import annotations
 

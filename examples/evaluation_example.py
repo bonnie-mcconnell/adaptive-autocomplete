@@ -1,17 +1,6 @@
 """
-evaluation_example.py - offline evaluation and weight optimisation
+Offline evaluation and weight optimisation example.
 
-Demonstrates the full evaluation pipeline:
-  1. Build a synthetic query log from the bundled English vocabulary
-  2. Compare all presets on the same log (apples-to-apples)
-  3. Show per-prefix-length MRR breakdown (where is the engine weak?)
-  4. Run weight optimisation to improve MRR
-  5. Save the query log to JSONL for reuse
-
-The harness compares presets on identical query logs so results
-are directly comparable - no confounds from different query sets.
-
-Run:
     python examples/evaluation_example.py
 """
 from __future__ import annotations

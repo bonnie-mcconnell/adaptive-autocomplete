@@ -114,14 +114,7 @@ all: install check
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
-# Build a clean source distribution using git archive.
-# Unlike 'zip -r', git archive excludes everything in .gitignore:
-# __pycache__, .coverage, .ruff_cache, .pyc files, and build artifacts.
-# Output: adaptive-autocomplete-<version>.tar.gz in the project root.
-#
-# Usage:
-#   make release          # create the archive
-#   make release-zip      # create a .zip instead (e.g. for GitHub releases)
+# Build a clean archive via git archive (respects .gitignore). See also: make release-zip
 VERSION := $(shell python -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['tool']['poetry']['version'])")
 
 release:
