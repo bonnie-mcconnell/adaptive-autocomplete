@@ -1,43 +1,12 @@
 """
-SymSpell-style approximate string matching for fast typo recovery.
+SymSpell approximate string matching: O(1) typo recovery via delete-neighbourhood index.
 
-Solves the BK-tree scalability problem with a fundamentally different approach.
+At construction, every vocabulary word's delete-neighbours (all strings reachable
+by up to max_distance deletions) are stored in a hash map. At query time the same
+delete-neighbours are computed for the query and looked up. 100% recall; no BK-tree
+traversal. At 48k words, max_distance=2: ~1.5s build, ~50MB RAM, ~0.4ms/query.
 
-Background
-----------
-BK-tree search degrades toward O(n) when max_distance is large relative
-to the vocabulary's edit-distance distribution - which happens with short
-English words at max_distance=2. At 48k words the BK-tree takes ~60ms/call.
-
-SymSpell pre-computes all delete-neighbours of every vocabulary word at
-construction time and stores them in a hash map. At query time, the query's
-delete-neighbours are computed on the fly (fast) and looked up in the map.
-This trades construction memory for O(1) average query time.
-
-Construction: generate all strings reachable from each word by up to
-max_distance deletions. For max_distance=2 and avg word length 7, each
-word generates ~(7 + 7*6/2) ≈ 28 delete-neighbours. At 48k words that's
-~1.3M entries in the map. Memory is ~50MB - acceptable for server use.
-
-Query: generate all delete-neighbours of the query (same computation,
-same cost). For a 7-char query at max_distance=2: ~28 lookups. Each
-lookup is O(1). Total query time is O(Q × D²) where Q is query length
-and D is max_distance - effectively constant for typical inputs.
-
-Correctness
------------
-Delete-neighbourhood matching exactly finds all words within max_distance
-Levenshtein edits, because any alignment of two strings within edit
-distance d can be expressed as a sequence of at most d deletions from
-each side. The set of (query_deletes ∩ word_deletes) is non-empty if and
-only if distance(query, word) <= max_distance.
-
-For max_distance=2: O(1) average query, 100% recall. No false negatives.
-
-References
-----------
-Wolf Garbe (2012). "1000x Faster Spelling Correction Algorithm."
-https://wolfgarbe.medium.com/1000x-faster-spelling-correction-algorithm-using-symmetricdelete-spelling-correction
+Ref: Wolf Garbe (2012) https://wolfgarbe.medium.com/1000x-faster-spelling-correction-algorithm-using-symmetricdelete-spelling-correction
 """
 from __future__ import annotations
 
@@ -59,25 +28,7 @@ _DEFAULT_MAX_DISTANCE = 2
 
 
 def _deletes(word: str, max_distance: int) -> frozenset[str]:
-    """
-    Return all strings reachable from word by up to max_distance deletions.
-
-    For word='hello', max_distance=1:
-        {'ello', 'hllo', 'helo', 'hell'}
-        (deduplicated: 4 unique strings)
-
-    The original word is NOT included - the map key is always a
-    deleted form, and the value is the original vocabulary word.
-
-    The empty string '' may appear in the output for short words
-    (e.g. _deletes('a', 1) returns {''}). This is correct and necessary
-    for SymSpell correctness: both 'a' and 'b' map to '' at distance 1,
-    so sharing the '' key is how the algorithm identifies that 'a' and 'b'
-    are substitution candidates (edit distance 1). Similarly, 2-char words
-    and 2-char queries both generate '' at max_distance=2, which is how
-    SymSpell finds all pairs of short words within max_distance of each other.
-    Filtering '' would introduce false negatives for short-word matching.
-    """
+    """All strings reachable from word by up to max_distance deletions. Original word excluded."""
     deletes: set[str] = set()
     queue: set[str] = {word}
 
@@ -98,31 +49,8 @@ class SymSpellPredictor(Predictor):
     """
     Approximate-match predictor using a delete-neighbourhood index.
 
-    100x faster than BK-tree at max_distance=2 over 48k words:
-        BKTree (EditDistancePredictor): ~60ms/call
-        SymSpellPredictor:              ~0.4ms/call
-
-    Full recall: finds every word within max_distance Levenshtein edits.
-    No minimum prefix length constraint (unlike TrigramPredictor).
-    Works correctly on 1-3 character queries.
-
-    Construction cost:
-        O(V × L × D) time, O(V × L × D) memory.
-        At 48k words, avg length 7, max_distance=2: ~1.5s build, ~50MB RAM.
-        Build once at startup; queries are O(Q × D²) ≈ O(1).
-
-    When to use:
-        - Need typo recovery on short prefixes (1-3 chars)
-        - Need O(1) query time regardless of vocabulary size
-        - Memory is not constrained (server environment)
-
-    When to use TrigramPredictor instead:
-        - Prefix length always >= 4 (TrigramPredictor is lighter to build)
-        - Memory is constrained (TrigramPredictor uses less memory)
-
-    Scoring:
-        1.0 / (1 + distance) - identical to TrigramPredictor and
-        EditDistancePredictor so the three are interchangeable.
+    ~0.4ms/query at 48k words (vs ~60ms for BK-tree). Full recall for
+    1-3 char queries where TrigramPredictor degrades. Build once at startup.
     """
 
     name = "symspell"
@@ -149,14 +77,7 @@ class SymSpellPredictor(Predictor):
             for d in _deletes(word, max_distance):
                 delete_map[d].add(word)
 
-        # Freeze to regular dicts for faster lookup.
-        # Note: the empty string '' IS a valid key. It is needed for SymSpell
-        # to correctly find short-word candidates: a 1-char word 'a' generates
-        # '' as a distance-1 delete; a 2-char query 'he' generates '' as a
-        # distance-2 delete. Both mapping to '' is how SymSpell identifies that
-        # 'a' and 'he' are within edit distance 2 of each other (which they are:
-        # two substitutions). Filtering '' would cause false negatives for all
-        # pairs of short words within max_distance of each other.
+        # Freeze to regular dicts for faster lookup. '' is a valid key - see _deletes().
         self._delete_map: dict[str, frozenset[str]] = {
             k: frozenset(v) for k, v in delete_map.items()
         }
@@ -196,13 +117,7 @@ class SymSpellPredictor(Predictor):
 
         results: list[ScoredSuggestion] = []
         for word, distance in candidates.items():
-            # Exact matches (word == prefix) are excluded - completing a word
-            # to itself is noise, not a suggestion.  This mirrors the behaviour
-            # of FrequencyPredictor, which excludes exact matches at index
-            # construction time.  Without this exclusion, a low-frequency exact
-            # match (e.g. "prog" freq=14) would outscore all prefix completions
-            # ("program" freq=1860, "programming" freq=234) because distance=0
-            # gives it the maximum score regardless of frequency.
+            # Skip exact matches - completing a word to itself is noise.
             if word == prefix:
                 continue
 

@@ -1,62 +1,4 @@
-"""
-Engine configuration serialisation with predictor registry.
-
-Problem
--------
-``AutocompleteEngine`` is configured in Python code: predictor classes,
-weights, ranker classes, vocabulary, history path.  Deploying the same
-engine to multiple servers means repeating the constructor call or writing
-a shared factory function.  There is no way to inspect a running engine's
-configuration, diff two configurations, or store a configuration alongside
-the vocabulary.
-
-Solution
---------
-``EngineConfig`` is a JSON-serialisable representation of an engine's full
-configuration.  ``engine.to_config()`` serialises a running engine.
-``EngineConfig.from_json(...).build()`` reconstructs it.
-
-For preset engines, ``build()`` delegates to ``create_engine()`` - fast and
-exact.  For custom engines, ``build()`` uses the ``PredictorRegistry`` to
-resolve predictor classes by name.  Third-party predictors can be registered
-via ``PredictorRegistry.register()``.
-
-What is serialised
-------------------
-- Preset name (if the engine was built via ``create_engine()``)
-- Predictor names and weights
-- Ranker names and parameters (half-life, weight)
-- The engine's schema version
-
-What is NOT serialised
-----------------------
-- History (use ``JsonHistoryStore.save()`` for that - it is a separate concern)
-- Vocabulary (too large; reference the vocabulary path instead)
-- Internal index state (rebuilt at ``from_config()`` time)
-
-Usage
------
-::
-
-    from aac.presets import create_engine
-    from aac.engine.config import EngineConfig
-
-    engine = create_engine("production")
-    config = engine.to_config()
-
-    # Reconstruct on another server
-    engine2 = EngineConfig.from_json(config.to_json()).build()
-    assert engine2.suggest("prog") == engine.suggest("prog")
-
-    # Custom engine reconstruction via registry
-    from aac.engine.config import PredictorRegistry
-
-    class MyPredictor:
-        name = "my_predictor"
-        def predict(self, ctx): ...
-
-    PredictorRegistry.register("my_predictor", lambda vocab, params: MyPredictor())
-"""
+"""EngineConfig: JSON-serialisable engine configuration and PredictorRegistry."""
 from __future__ import annotations
 
 import json
@@ -86,43 +28,17 @@ _PredictorFactory = Callable[[Mapping[str, int] | None, dict[str, Any]], "Predic
 
 class PredictorRegistry:
     """
-    Registry mapping predictor names to factory callables.
+    Maps predictor names to factory callables for EngineConfig.build().
 
-    Allows ``EngineConfig.build()`` to reconstruct custom engines from
-    config without hardcoding all predictor classes.
-
-    Built-in predictors (frequency, history, symspell, trigram, bktree,
-    trie, static_prefix) are registered automatically at import time.
-    Third-party or user-defined predictors must be registered before
-    calling ``build()``.
-
-    Example::
-
-        from aac.engine.config import PredictorRegistry
-
-        class MyDomainPredictor:
-            name = "domain"
-            def predict(self, ctx): ...
-
-        PredictorRegistry.register(
-            "domain",
-            lambda vocab, params: MyDomainPredictor()
-        )
+    Built-ins are registered at import time. Register custom predictors
+    via PredictorRegistry.register() before calling build().
     """
 
     _registry: dict[str, _PredictorFactory] = {}
 
     @classmethod
     def register(cls, name: str, factory: _PredictorFactory) -> None:
-        """
-        Register a factory for a predictor name.
-
-        Parameters:
-            name:    The predictor's ``name`` attribute (used as the config key).
-            factory: Callable ``(vocabulary, params) -> Predictor``.
-                     ``vocabulary`` is the dict passed to ``build()``, or None.
-                     ``params`` is the ``params`` dict from ``PredictorConfig``.
-        """
+        """Register a (vocabulary, params) -> Predictor factory under name."""
         cls._registry[name] = factory
 
     @classmethod
@@ -268,39 +184,7 @@ class RankerConfig:
 
 @dataclass
 class EngineConfig:
-    """
-    JSON-serialisable engine configuration.
-
-    Captures the full structural configuration of an ``AutocompleteEngine``
-    so it can be reconstructed on another process or server without
-    repeating Python constructor calls.
-
-    Attributes:
-        preset:      Name of the preset used to build the engine, or None
-                     for custom engines.
-        predictors:  Predictor names and weights in order.
-        rankers:     Ranker names and parameters in order.
-        version:     Schema version for forward compatibility.
-        metadata:    Arbitrary caller-supplied key-value pairs (e.g.
-                     ``{"vocabulary_path": "...", "deployed_at": "..."}``).
-
-    Example::
-
-        config = EngineConfig(
-            preset="production",
-            predictors=[
-                PredictorConfig("frequency", weight=1.0),
-                PredictorConfig("history",   weight=1.2),
-                PredictorConfig("symspell",  weight=0.35),
-                PredictorConfig("trigram",   weight=0.4),
-            ],
-            rankers=[
-                RankerConfig("score"),
-                RankerConfig("decay", params={"half_life_seconds": 3600, "weight": 1.5}),
-            ],
-            metadata={"vocabulary_path": "~/.aac_vocab.json"},
-        )
-    """
+    """JSON-serialisable engine configuration. Use engine.to_config() to produce one."""
 
     preset: str | None
     predictors: list[PredictorConfig]
@@ -364,39 +248,10 @@ class EngineConfig:
         history: History | None = None,
     ) -> AutocompleteEngine:
         """
-        Reconstruct an ``AutocompleteEngine`` from this config.
+        Reconstruct an AutocompleteEngine from this config.
 
-        For **preset engines** (``preset`` is set), delegates to
-        ``create_engine()`` - this is the fast path and produces identical
-        behaviour to the original engine.
-
-        For **custom engines** (``preset`` is None), uses the
-        ``PredictorRegistry`` to resolve predictor classes by name and
-        rebuilds the engine from its structural config.  All built-in
-        predictors are registered automatically; custom predictors must be
-        registered via ``PredictorRegistry.register()`` before calling
-        ``build()``.
-
-        Parameters:
-            vocabulary: Custom vocabulary mapping word → frequency count.
-                        If None and ``metadata`` contains a ``"vocabulary_path"``
-                        key, a warning is emitted.  If None with no metadata
-                        hint, the bundled 48k English corpus is used.
-            history:    Pre-loaded ``History`` instance.  If None, starts
-                        with an empty in-memory history.
-
-        Returns:
-            A fully initialised ``AutocompleteEngine``.
-
-        Example::
-
-            config = engine.to_config(
-                metadata={"vocabulary_path": str(vocab_path)},
-            )
-            # ... round-trip via JSON ...
-            import json
-            vocab = json.load(open(config.metadata["vocabulary_path"]))
-            engine2 = config.build(vocabulary=vocab)
+        Preset engines delegate to create_engine() (fast path).
+        Custom engines use PredictorRegistry to resolve predictors by name.
         """
         import warnings
 
@@ -474,20 +329,7 @@ class EngineConfig:
         )
 
     def diff(self, other: EngineConfig) -> list[str]:
-        """
-        Return a list of human-readable differences between two configs.
-
-        Returns an empty list if the configs are equivalent.  Useful for
-        auditing whether two deployed engines have the same configuration.
-
-        Example::
-
-            changes = config_a.diff(config_b)
-            if changes:
-                print("Config changed:")
-                for line in changes:
-                    print(" ", line)
-        """
+        """Return human-readable differences between two configs. Empty list means identical."""
         diffs: list[str] = []
 
         if self.preset != other.preset:

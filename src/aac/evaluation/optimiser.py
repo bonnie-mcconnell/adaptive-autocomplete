@@ -1,48 +1,4 @@
-"""
-WeightOptimiser: automated predictor weight tuning.
-
-Finds the predictor weight combination that maximises a chosen metric
-(default: MRR@10) over a labelled query log.
-
-Predictors are built once at construction time; only weights change
-between evaluations. Without this caching, tuning over the production
-preset would cost ~270s (27 evals × 10s/build). With it: ~0.05s.
-
-Two strategies:
-
-1. GridSearch  - exhaustive search over a discrete weight grid.
-   Guaranteed to find the global optimum on the grid.
-   Practical for ≤3 predictors with ≤4 values each (≤64 evals).
-
-2. CoordinateDescent - tune one weight at a time, cycling until
-   convergence. O(rounds × sum of grid sizes) instead of O(product).
-   May converge to a local optimum.
-
-Example
--------
-::
-
-    from aac.evaluation import EvaluationHarness, WeightOptimiser
-    from aac.evaluation.datasets import make_synthetic_query_log
-    from aac.data import load_english_frequencies
-    from aac.presets import create_engine
-
-    vocab = list(load_english_frequencies().keys())[:500]
-    log = make_synthetic_query_log(vocab, prefix_lengths=[2, 3])
-    harness = EvaluationHarness(log, k=10)
-
-    opt = WeightOptimiser(harness, metric="mrr")
-    result = opt.coordinate_descent(
-        base_preset="production",
-        weight_grid={
-            "frequency":  [0.5, 1.0, 2.0],
-            "history":    [0.8, 1.2, 1.6],
-            "symspell":   [0.2, 0.35, 0.5],
-            "trigram":    [0.2, 0.4,  0.6],
-        },
-    )
-    print(result.report())
-"""
+"""WeightOptimiser: grid search and coordinate descent over predictor weights."""
 from __future__ import annotations
 
 import itertools
@@ -63,21 +19,7 @@ _VALID_METRICS: frozenset[str] = frozenset(
 
 @dataclass
 class OptimisationResult:
-    """
-    Result of a weight optimisation run.
-
-    Attributes:
-        best_weights:   Dict mapping predictor name to optimal weight.
-                        Contains the preset defaults for any predictor
-                        not in the search space.
-        baseline_score: Metric value with the original (untuned) weights.
-        best_score:     Metric value with the optimised weights.
-        metric:         Name of the metric that was optimised.
-        strategy:       "grid_search" or "coordinate_descent".
-        history:        List of (weights, score) pairs tried, in order.
-                        Useful for plotting the optimisation landscape.
-        n_evaluations:  Total number of engine evaluations performed.
-    """
+    """Result of a weight optimisation run."""
     best_weights: dict[str, float]
     baseline_score: float
     best_score: float
@@ -121,17 +63,9 @@ class WeightOptimiser:
     """
     Automated predictor weight tuning.
 
-    Builds the predictor indexes ONCE at construction time. Only weights
-    change between evaluations, so even the production preset (10s to
-    build SymSpell) is practical to tune: rebuilding weight-only takes
-    ~2ms per evaluation instead of 10s.
-
-    Parameters:
-        harness:  EvaluationHarness to evaluate against.
-        metric:   Metric to maximise. One of:
-                  "mrr" (default), "ndcg", "precision", "recall", "ap",
-                  "hit_rate".
-        verbose:  If True, print progress during search.
+    Predictor indexes are built once at construction; only weights change
+    between evaluations, so tuning the production preset costs ~2ms/eval
+    rather than 10s.
     """
 
     def __init__(
@@ -167,13 +101,7 @@ class WeightOptimiser:
         return float(mapping[self._metric])
 
     def _get_base_weighted_predictors(self, base_preset: str) -> list[WeightedPredictor]:
-        """
-        Return the WeightedPredictor list for a preset, building once and caching.
-
-        Predictors hold the index state (SymSpell delete map, trigram index, etc.)
-        which is expensive to build and independent of weights. Caching allows
-        thousands of weight evaluations without rebuilding the indexes.
-        """
+        """Return cached predictors for a preset, building indexes on first call."""
         if base_preset not in self._predictor_cache:
             if self._verbose:
                 print(f"Building {base_preset!r} preset indexes (once)...", end=" ", flush=True)
@@ -186,13 +114,7 @@ class WeightOptimiser:
         return self._predictor_cache[base_preset]
 
     def _get_cached_ranker_templates(self, base_preset: str) -> list[Ranker]:
-        """
-        Return ranker instances for a preset, built once and cached as templates.
-
-        Rankers bind to a History at construction time. We cache the template
-        ranker instances (their type and config) and re-instantiate them cheaply
-        per evaluation with a fresh History, avoiding the expensive index rebuild.
-        """
+        """Cached ranker templates for a preset. Re-instantiated with fresh history per evaluation."""
         if base_preset not in self._ranker_cache:
             from aac.domain.history import History
             from aac.presets import get_preset
@@ -205,14 +127,7 @@ class WeightOptimiser:
         base_preset: str,
         history: History,
     ) -> list[Ranker]:
-        """
-        Construct fresh ranker instances bound to the given History.
-
-        This is fast (no index build) - rankers only wrap history lookups
-        and sort functions. We inspect each cached ranker's type and
-        re-instantiate it with the new History so that evaluation runs are
-        independent and cannot bleed history state across evaluations.
-        """
+        """Bind ranker templates to a fresh History for one evaluation run."""
         from aac.ranking.decay import DecayFunction, DecayRanker
         from aac.ranking.learning import LearningRanker
         from aac.ranking.score import ScoreRanker
@@ -257,16 +172,7 @@ class WeightOptimiser:
         base_preset: str,
         weights: dict[str, float],
     ) -> AutocompleteEngine:
-        """
-        Build an engine with modified predictor weights.
-
-        Predictor INDEXES are cached (built once per preset, shared across all
-        evaluations). Only the weight wrappers are recreated per evaluation.
-        Rankers are rebuilt cheaply (no index - they only wrap History lookups).
-
-        Reduces per-evaluation cost from O(index_build_time) to O(n_predictors).
-        For the production preset: ~5s → ~2ms per evaluation.
-        """
+        """Build an engine with cached indexes but new weights (~2ms vs 5s for production)."""
         from aac.domain.history import History
         from aac.domain.types import WeightedPredictor
         from aac.engine.engine import AutocompleteEngine
@@ -309,25 +215,7 @@ class WeightOptimiser:
         base_preset: str,
         weight_grid: dict[str, list[float]],
     ) -> OptimisationResult:
-        """
-        Exhaustive grid search over specified predictor weights.
-
-        Evaluates every combination of weights in ``weight_grid``.
-        Predictor indexes are built once and reused across all evaluations.
-
-        Parameters:
-            base_preset:  Preset to use as the baseline engine structure.
-            weight_grid:  Dict mapping predictor name to list of weights
-                          to try. Only predictors named here are tuned.
-
-        Returns:
-            OptimisationResult with the best weight combination found.
-            ``best_weights`` always contains the full weight dict (preset
-            defaults for predictors not in the search space).
-
-        Complexity: O(product of grid sizes × n_queries × k)
-        Index build: O(1) (built once, cached)
-        """
+        """Exhaustive search over all weight combinations. Returns the best OptimisationResult."""
         baseline_weights = self._get_baseline_weights(base_preset)
         baseline_engine = self._build_engine_with_weights(base_preset, baseline_weights)
         baseline_score = self._evaluate(baseline_engine)
@@ -389,17 +277,7 @@ class WeightOptimiser:
         """
         Coordinate descent over predictor weights.
 
-        Cycles through each predictor, fixing all others and finding
-        the best weight for the current predictor. Repeats until
-        convergence or max_rounds.
-
-        Parameters:
-            base_preset:  Preset to use as the baseline.
-            weight_grid:  Dict mapping predictor name to candidate weights.
-            max_rounds:   Maximum number of full coordinate cycles.
-
-        Returns:
-            OptimisationResult with the best weights found.
+        Tunes one predictor at a time, cycling until convergence or max_rounds.
             ``best_weights`` always contains the full weight dict.
         """
         baseline_weights = self._get_baseline_weights(base_preset)

@@ -1,48 +1,13 @@
 """
-Engine benchmark across all presets at real vocabulary scale.
+Benchmark suggest() and explain() across all presets at real vocabulary scale.
 
-Reports average, p50, and p99 latency per suggest() and explain() call.
-Results can be saved to JSON and diffed against a baseline to catch
-performance regressions before they reach CI.
+Reports avg, p50, and p99 latency. Save a baseline with --save and compare
+against it with --diff to catch regressions.
 
 Usage:
-    make benchmark                      # run and print
-    make benchmark-save                 # run and save baseline to .benchmark_baseline.json
-    make benchmark-diff                 # run and compare against saved baseline
-
-    poetry run python -m aac.benchmarks.benchmark_engine
-    poetry run python -m aac.benchmarks.benchmark_engine --save
-    poetry run python -m aac.benchmarks.benchmark_engine --diff
-
-Preset notes:
-    robust: SymSpell delete-neighbourhood index. O(1) average query at any
-        vocabulary size. ~0.4ms/call at 48k words. Replaces BK-tree in 0.2.0.
-    bktree: Legacy BK-tree retained for comparison. O(n) at max_distance=2
-        with short prefixes. ~60ms/call at 48k words. Benchmarked against
-        a 1k-word slice; full-scale numbers are shown separately.
-    production: trigram pre-filter + exact Levenshtein. ~0.6ms/call at 48k.
-
-explain() notes:
-    explain() runs a single forward pass through the ranker chain, capturing
-    per-ranker score deltas at each step. It does NOT call _apply_ranking()
-    separately - that would double the history lookup cost. The implementation:
-
-        1. _score_with_breakdown() → pre-ranking scores + per-predictor breakdown
-        2. Single loop: for each ranker, call ranker.rank(), capture delta, advance
-
-    History-reading rankers (LearningRanker, DecayRanker) perform exactly 1
-    history lookup during explain(), the same as during suggest(). The
-    per-ranker caching (LearningRanker._counts(), DecayRanker._decayed_counts())
-    ensures that even if explain() is called immediately after rank(), the
-    cache from rank() is reused and no second scan occurs.
-
-    Additional cost over suggest() is O(k) RankingExplanation object
-    construction, typically <0.1ms.
-
-Regression bounds:
-    CI enforces p99 < 5ms for stateless and < 30ms for production. These are
-    10-20x the measured values - deliberately generous to avoid flakiness on
-    loaded CI runners while still catching catastrophic regressions.
+    make benchmark
+    make benchmark-save
+    make benchmark-diff
 """
 from __future__ import annotations
 

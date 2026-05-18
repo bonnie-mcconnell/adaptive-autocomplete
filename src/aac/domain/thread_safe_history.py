@@ -26,37 +26,14 @@ from aac.domain.history import History, HistoryEntry
 
 class ThreadSafeHistory(History):
     """
-    A History subclass that is safe for concurrent reads and writes.
+    History subclass safe for concurrent reads and writes.
 
-    Uses a ``threading.RWLock``-style pattern: a ``threading.Condition``
-    for write serialisation, reference-counted readers for read concurrency.
-    Multiple readers run simultaneously; writes wait for active readers to
-    finish. Matches the engine's access pattern: many concurrent predict()
-    reads, occasional record_selection() writes.
-
-    Concurrency guarantees:
-        - Concurrent ``record()`` calls are fully serialised; no corruption.
-        - Read methods run concurrently with each other and see a
-          consistent, fully-committed view.
-        - Writes wait for active reads; reads wait while a write is pending.
-
-    Works on CPython, PyPy, and free-threaded CPython (PEP 703 / 3.13+).
-    Does not rely on GIL guarantees.
-
-    Writer starvation: under sustained heavy read load a writer may wait
-    for a quiet moment. In practice writes are rare (one per selection),
-    so this isn't a concern. If it ever is, switch to a fair queued lock.
+    Multiple readers run simultaneously; writes wait for active readers to finish.
+    Safe on CPython, PyPy, and free-threaded 3.13+. Does not rely on GIL guarantees.
     """
 
     def __init__(self, source: History | None = None) -> None:
-        """
-        Create a ThreadSafeHistory, optionally pre-populated from an
-        existing History (e.g. loaded from JsonHistoryStore).
-
-        Parameters:
-            source: Existing History to copy entries from.  If None,
-                    starts empty.
-        """
+        """Create a ThreadSafeHistory, optionally pre-populated from an existing History."""
         super().__init__()
 
         # Condition used for both read and write coordination.
@@ -196,15 +173,10 @@ class ThreadSafeHistory(History):
 
     def snapshot_history(self) -> History:
         """
-        Return a plain (non-thread-safe) snapshot of the current history.
+        Return a plain snapshot of history taken under a read lock.
 
-        Takes a consistent point-in-time copy under a read lock.  Entries
-        recorded after snapshot_history() returns are not included.
-
-        Useful for passing to ``JsonHistoryStore.save()`` without holding
-        a lock during I/O::
-
-            store.save(ts_history.snapshot_history())
+        Entries added after this call returns are not included.
+        Use for persistence: store.save(ts_history.snapshot_history())
         """
         self._acquire_read()
         try:
@@ -229,31 +201,5 @@ class ThreadSafeHistory(History):
 
     @property
     def lock(self) -> threading.Condition:
-        """
-        The underlying coordination lock.
-
-        This is an advanced escape hatch for compound atomic operations.
-        In normal use you should never need it - ``record()`` and all read
-        methods are already individually thread-safe.
-
-        The only correct use case is a compound read-then-write that must
-        be atomic - for example, capping the number of recordings for a
-        prefix.  The pattern requires calling the *internal* (un-locked)
-        methods via ``super()``, because calling the public locked methods
-        while holding ``lock`` will deadlock::
-
-            # WRONG - deadlocks: counts_for_prefix() tries to acquire
-            # a read-lock while the write-lock is already held.
-            with history.lock:
-                count = history.counts_for_prefix("he")   # DEADLOCK
-
-            # CORRECT - use a subclass or internal access for the read,
-            # then call the public record() after releasing the lock.
-            # In practice this pattern is rarely needed; if you find
-            # yourself reaching for it, consider whether a higher-level
-            # lock in your application code is a cleaner solution.
-
-        Warning: acquiring ``lock`` while holding a read-lock will deadlock.
-        Only use this for write-side compound operations via internal methods.
-        """
+        """The underlying Condition, for compound atomic operations. Acquiring while holding a read-lock will deadlock."""
         return self._lock

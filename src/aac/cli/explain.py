@@ -10,27 +10,7 @@ def run(
     text: str,
     limit: int,
 ) -> None:
-    """
-    Render ranking explanations for a given input.
-
-    Scores are shown both as raw values and as a percentage of the
-    top-ranked suggestion's score, so the relative contribution of
-    each signal is readable at a glance.
-
-    Column meanings:
-        score   - final ranked score (base + ranker boosts)
-        base    - aggregated predictor score before ranking
-                  (sum of all predictor contributions: frequency,
-                  history predictor, typo correction, etc.)
-        boost   - total ranker boost applied on top of the base score
-                  (from LearningRanker, DecayRanker, etc.)
-
-    Use ``engine.explain_as_dicts()`` for a per-predictor breakdown
-    of the base score (``base_components``) and per-ranker breakdown
-    of the boost (``history_components``).
-
-    Presentation-layer only - no scoring logic here.
-    """
+    """Print per-suggestion score breakdowns. score=base+boost; percentages relative to top result."""
     explanations = engine.explain(text)
     if limit is not None:
         explanations = explanations[:limit]

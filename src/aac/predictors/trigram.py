@@ -1,53 +1,13 @@
 """
 Trigram index for approximate string matching at scale.
 
-Solves the BK-tree scalability problem at long query lengths.
+Pre-filters Levenshtein candidates by shared trigrams, cutting BK-tree's ~60ms/query
+to ~600µs at 48k words. Requires queries >= 4 chars; trigrams give poor discrimination
+below that. For short-prefix typo recovery use SymSpellPredictor instead.
 
-Background
-----------
-BK-tree search degrades toward O(n) when the search ball (the set of
-all strings within max_distance edits) covers a large fraction of the
-vocabulary. This happens at max_distance=2 with short prefixes: a 4-char
-query has ~60ms latency at 48k words.
+Build: O(V*L), ~258ms one-time. Query: O(Q*B + S*Q²) ≈ 600µs avg.
 
-Trigram pre-filtering reduces Levenshtein work to a shortlist:
-
-  1. Build an inverted index: trigram -> [words that contain it].
-     Trigrams are computed on padded strings ("  word ") to give
-     boundary-sensitive tokens.
-
-  2. At query time: intersect the query's trigrams with the index to
-     build a candidate shortlist, then run exact Levenshtein on it.
-
-Shortlist size scales with trigram overlap, not vocabulary size. For
-queries of length >= 5, the shortlist is typically 20-100 words. For
-short queries (length < 4), trigrams provide weak discrimination and
-the shortlist can approach the full vocabulary - so this predictor
-requires min_prefix_length (default: 4) and returns empty below it.
-
-Complexity
-----------
-    Construction:  O(V × L) - 258ms at 48k words, one-time cost
-    Query (≥4ch):  O(Q × B + S × Q²) ≈ 600µs avg at 48k words
-    Query (<4ch):  returns [] - use EditDistancePredictor on a small vocab
-
-    where V=vocab size, L=avg word length, Q=query length,
-    B=avg bucket size, S=shortlist size.
-
-Correctness tradeoff
---------------------
-The trigram filter is a heuristic. It may miss true matches when query
-and target share few trigrams despite small edit distance - worst case:
-'ab' vs 'ba' (transposition), or very short strings. The threshold is
-tuned conservatively (max(1, len(query_trigrams) - max_distance)) to
-keep recall high for realistic typing errors on 4+ char queries.
-
-For exact recall over small vocabularies, use EditDistancePredictor.
-
-References
-----------
-Gravano et al. (2001). "Approximate String Joins in a Database
-(Almost) for Free." VLDB.
+Ref: Gravano et al. (2001). "Approximate String Joins in a Database (Almost) for Free." VLDB.
 """
 from __future__ import annotations
 
@@ -110,15 +70,7 @@ class TrigramIndex:
         *,
         max_distance: int,
     ) -> list[tuple[str, int]]:
-        """
-        Return (word, distance) pairs within max_distance of query.
-
-        Returns an empty list if ``len(query) < _MIN_PREFIX_LENGTH`` (currently
-        4). Trigrams provide weak discrimination for short strings - the
-        candidate shortlist approaches the full vocabulary and the Levenshtein
-        step dominates. For short-prefix typo recovery, use SymSpellPredictor
-        or AdaptiveSymSpellPredictor instead.
-        """
+        """Return (word, distance) pairs within max_distance. Empty if len(query) < 4."""
         if len(query) < _MIN_PREFIX_LENGTH:
             return []
 
@@ -156,27 +108,8 @@ class TrigramIndex:
 
 class TrigramPredictor(Predictor):
     """
-    Approximate-match predictor backed by a trigram index.
-
-    Replaces EditDistancePredictor (BK-tree) when vocabulary size makes
-    BK-tree latency unacceptable. At 48k words and max_distance=2:
-
-        EditDistancePredictor:  ~60ms/call  (BK-tree degrades to O(n))
-        TrigramPredictor:       ~600µs/call (shortlist of ~20-100 words)
-
-    Constraint: returns empty for queries shorter than 4 characters.
-    Trigrams provide too little discrimination on 1-3 char strings.
-    For short-prefix typo recovery, use EditDistancePredictor on a
-    curated small vocabulary.
-
-    Scoring:
-        Primary: 1.0 / (1 + distance) - closer matches score higher.
-        Secondary (when frequencies provided): a log-scaled frequency
-        multiplier within each distance bucket. A maximally frequent word
-        scores 1.5× a zero-frequency word at the same distance. Distance
-        always dominates across buckets. See ``aac.predictors._scoring``
-        for the full formula and rationale. Score matches SymSpellPredictor
-        and EditDistancePredictor's scale so the three are interchangeable.
+    Approximate-match predictor backed by a trigram index (~600µs/query at 48k words).
+    Returns empty for queries < 4 chars; use SymSpellPredictor there instead.
     """
 
     name = "trigram"

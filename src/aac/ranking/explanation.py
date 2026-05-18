@@ -8,15 +8,9 @@ from dataclasses import asdict, dataclass, field
 @dataclass(frozen=True)
 class RankingExplanation:
     """
-    Explains how a final ranking score was produced for a suggestion.
+    Explains how a suggestion's final score was produced.
 
-    Scoring lifecycle:
-    - Predictors contribute base score components
-    - Ranking layers apply adjustments (e.g. learning)
-    - Final score is derived deterministically
-
-    Invariants:
-    - final_score == base_score + history_boost
+    Invariant: final_score == base_score + history_boost (enforced at construction).
     """
 
     value: str
@@ -61,28 +55,11 @@ class RankingExplanation:
         )
 
     def to_dict(self) -> dict[str, float | str | dict[str, float]]:
-        """
-        JSON-serialisable representation.
-        """
+        """JSON-serialisable dict."""
         return asdict(self)
 
     def merge(self, other: RankingExplanation) -> RankingExplanation:
-        """
-        Merge another explanation into this one.
-
-        Intended for combining contributions from multiple rankers.
-
-        Note on arithmetic: ``final_score`` is computed as
-        ``(self.base_score + other.base_score) + (self.history_boost + other.history_boost)``
-        rather than summing all four terms independently.  This matches the
-        invariant check in ``__post_init__`` (``base + boost``) and avoids
-        floating-point rounding errors where a four-way sum evaluates
-        differently from a two-way sum of the same values.
-
-        ``contribution_pct`` is recomputed from the merged component maps so
-        callers always see a consistent, non-empty breakdown.  Dropping it
-        (returning ``{}``) would silently discard usable diagnostic data.
-        """
+        """Merge explanations from two rankers into one. Raises if values differ."""
         if self.value != other.value:
             raise ValueError("Cannot merge explanations for different values")
 
@@ -133,13 +110,7 @@ class RankingExplanation:
         score: float,
         source: str,
     ) -> RankingExplanation:
-        """
-        Create an explanation from a single predictor contribution.
-
-        Used by rankers that surface a predictor's raw score as the base.
-        Populates ``base_components`` with the source and score so that
-        ``explain_as_dicts()`` can show a per-predictor breakdown.
-        """
+        """Create a base explanation from a single predictor's score."""
         return RankingExplanation(
             value=value,
             base_score=score,
@@ -156,20 +127,7 @@ class RankingExplanation:
         boost: float,
         source: str,
     ) -> RankingExplanation:
-        """
-        Return a new explanation with a history boost applied.
-
-        Used by rankers that layer a recency or learning adjustment on top
-        of an existing base explanation. Accumulates the boost into
-        ``history_components`` under the named source so that
-        ``explain_as_dicts()`` can show a per-ranker boost breakdown.
-
-        Note on arithmetic: ``new_history_boost`` is computed first, then
-        ``final_score = base_score + new_history_boost``.  This matches
-        the invariant check in ``__post_init__`` and avoids floating-point
-        rounding errors where a three-term sum evaluates differently from
-        the two-term sum the invariant check uses.
-        """
+        """Return a new explanation with boost added to history_boost."""
         new_history_boost = self.history_boost + boost
         return RankingExplanation(
             value=self.value,

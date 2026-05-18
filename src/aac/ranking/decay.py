@@ -49,20 +49,11 @@ def utcnow() -> datetime:
 
 class DecayRanker(Ranker, LearnsFromHistory):
     """
-    Ranker that boosts suggestions using recency-weighted history.
+    Boosts suggestions using exponentially decayed selection counts.
+    Recent selections rank higher; old ones fade out.
 
-    Properties:
-    - Deterministic
-    - Bounded
-    - Composable
-    - Fully explainable
-
-    Performance:
-        ``rank()`` and ``explain()`` share a single ``_decayed_counts()``
-        call per (prefix, now) pair.  When the engine calls both in
-        sequence - as ``explain()`` does - the history scan runs once,
-        not twice.  The cache is invalidated on every ``rank()`` call so
-        a new ``now`` timestamp is always used.
+    rank() and explain() share one _decayed_counts() call per (prefix, now) pair.
+    Cache is invalidated at the start of each rank() call.
     """
 
     def __init__(
@@ -78,31 +69,17 @@ class DecayRanker(Ranker, LearnsFromHistory):
         self._weight = weight
         self._now = now
 
-        # Cache: stores result from the most recent rank() call.
-        # explain() reuses it when called with the same prefix immediately after rank().
-        # Invalidated at the start of every rank() to ensure fresh history reads.
         self._cached_prefix: str | None = None
         self._cached_now: datetime | None = None
         self._cached_counts: dict[str, float] = {}
         self._cache_valid: bool = False
-        # _rank_now stores the timestamp used in the most recent rank() call.
-        # explain() reads this to reuse the exact same now, guaranteeing a
-        # cache hit and avoiding a second O(k) history scan.
         self._rank_now: datetime | None = None
 
     def _now_utc(self) -> datetime:
         return self._now if self._now is not None else utcnow()
 
     def _decayed_counts(self, prefix: str, now: datetime) -> dict[str, float]:
-        """
-        Return recency-weighted selection counts for prefix.
-
-        Results are cached for the (prefix, now) pair from the most recent
-        rank() call.  explain() hits the cache when called in the same
-        engine pipeline pass, eliminating a redundant O(k) history scan.
-        The cache is invalidated at the start of every rank() call so that
-        history updates between rank() calls are always visible.
-        """
+        """Recency-weighted selection counts. Cached per (prefix, now) from the last rank() call."""
         if self._cache_valid and prefix == self._cached_prefix and now == self._cached_now:
             return self._cached_counts
 
@@ -121,11 +98,7 @@ class DecayRanker(Ranker, LearnsFromHistory):
         return result
 
     def ranker_config(self) -> dict[str, float]:
-        """Return the parameters needed to reconstruct this ranker.
-
-        Used by WeightOptimiser and engine serialisation to copy ranker
-        configuration without accessing private attributes directly.
-        """
+        """Return parameters needed to reconstruct this ranker."""
         return {
             "half_life_seconds": self._decay.half_life_seconds,
             "weight": self._weight,
@@ -139,11 +112,9 @@ class DecayRanker(Ranker, LearnsFromHistory):
         if not suggestions:
             return []
 
-        # Invalidate so this rank() always re-fetches history, then cache
-        # the result so explain() can reuse it without a second scan.
         self._cache_valid = False
         now = self._now_utc()
-        self._rank_now = now  # stored so explain() reuses the exact same timestamp
+        self._rank_now = now
         decayed = self._decayed_counts(prefix, now)
         if not decayed:
             return list(suggestions)
@@ -173,9 +144,6 @@ class DecayRanker(Ranker, LearnsFromHistory):
                 ),
             ))
 
-        # Stable sort: score desc, original index as tiebreaker.
-        # Matches LearningRanker's sort contract so composing both rankers
-        # produces deterministic output regardless of insertion order.
         scored.sort(key=lambda t: (-t[0], t[1]))
         return [s for _, _, s in scored]
 
@@ -184,11 +152,6 @@ class DecayRanker(Ranker, LearnsFromHistory):
         prefix: str,
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[RankingExplanation]:
-        # Reuse _rank_now so explain() hits the cache that rank() populated.
-        # Calling _now_utc() here would produce a microsecond-different timestamp,
-        # which would always miss the cache and trigger a redundant O(k) history scan.
-        # If explain() is called without a prior rank() (standalone use), fall back
-        # to the current time - cache will miss and recompute, which is correct.
         now = self._rank_now if self._rank_now is not None else self._now_utc()
         decayed = self._decayed_counts(prefix, now)
 
@@ -196,10 +159,7 @@ class DecayRanker(Ranker, LearnsFromHistory):
 
         for s in suggestions:
             boost = decayed.get(s.suggestion.value, 0.0) * self._weight
-            # DecayRanker is a boost ranker: it contributes recency-weighted
-            # history signal, not a base score. base_score=0.0 here ensures
-            # the merged explanation's base_score equals only ScoreRanker's
-            # contribution - the true pre-ranking predictor score.
+            # base_score=0.0: this ranker contributes boost only, not a base score.
             explanations.append(
                 RankingExplanation(
                     value=s.suggestion.value,

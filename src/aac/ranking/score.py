@@ -8,15 +8,7 @@ from aac.ranking.explanation import RankingExplanation
 
 
 class ScoreRanker(Ranker):
-    """
-    Pure score-based ranker.
-
-    Invariants:
-    - Deterministic
-    - Stable
-    - Non-mutating
-    - Idempotent
-    """
+    """Sort suggestions by descending score. Stable: preserves original order on ties."""
 
     def rank(
         self,

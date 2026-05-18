@@ -9,7 +9,7 @@ the one they actually see. That makes explain() useless for debugging.
 
 The invariant is tested across:
   - All available presets (stateless, default, recency, production, robust)
-  - Multiple prefix lengths (1–7 chars)
+  - Multiple prefix lengths (1-7 chars)
   - Prefixes with and without history
   - Prefixes that trigger typo recovery
 """

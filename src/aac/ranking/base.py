@@ -9,15 +9,7 @@ from aac.ranking.explanation import RankingExplanation
 
 
 class Ranker(ABC):
-    """
-    Base contract for all ranking strategies.
-
-    Rankers must be:
-    - deterministic
-    - stable
-    - non-mutating
-    - explanation-aligned (explain() matches rank() order)
-    """
+    """Base class for ranking strategies. Implementations must be deterministic and explanation-aligned."""
 
     @abstractmethod
     def rank(
@@ -25,9 +17,7 @@ class Ranker(ABC):
         prefix: str,
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[ScoredSuggestion]:
-        """
-        Return suggestions ordered by preference.
-        """
+        """Return suggestions in ranked order."""
         raise NotImplementedError  # pragma: no cover
 
     @abstractmethod
@@ -36,7 +26,5 @@ class Ranker(ABC):
         prefix: str,
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[RankingExplanation]:
-        """
-        Return ranking explanations aligned exactly with rank().
-        """
+        """Return explanations in the same order as rank()."""
         raise NotImplementedError  # pragma: no cover

@@ -18,42 +18,7 @@ __all__ = ["EditDistancePredictor", "levenshtein"]
 
 
 class EditDistancePredictor(Predictor):
-    """
-    Error-tolerant predictor using edit distance.
-
-    Intended for recovering from mid-word typos and near-miss prefixes.
-    Emits a weak signal that should be combined with stronger predictors.
-
-    Index:
-        Uses a BK-tree built at construction time. The BK-tree exploits
-        the triangle inequality property of Levenshtein distance to prune
-        subtrees that cannot contain results without evaluating them.
-        All words within max_distance edits are returned without exception,
-        including cases where the first character differs from the query.
-
-    Scoring:
-        Uses the shared formula from ``aac.predictors._scoring``:
-        ``base_score / (1 + distance) * (1 + FREQ_WEIGHT * freq_score)``.
-        Scores are directly comparable with SymSpellPredictor and
-        TrigramPredictor when combined in a weighted predictor stack.
-        When ``frequencies`` is not provided, the frequency multiplier
-        is 1.0 (equivalent to freq_score=0.0) - distance-only ranking.
-
-    Performance characteristics:
-        BK-tree pruning degrades when max_distance is large relative to
-        the query length. At max_distance=2 with 4-character prefixes,
-        the search visits ~75% of nodes in a 312-word vocabulary - the
-        search ball is large enough that triangle inequality pruning helps
-        little. At max_distance=1 pruning is substantially more effective.
-
-        At vocabularies over ~100k words, BK-trees become impractical.
-        Production systems use trigram indexes or approximate nearest-
-        neighbour structures over word embeddings.
-
-    Correctness guarantee:
-        Returns every word in the vocabulary within max_distance Levenshtein
-        edits of the query prefix, without exception.
-    """
+    """BK-tree fuzzy matching. Degrades toward O(n) at large max_distance; use SymSpellPredictor for production."""
 
     name = "edit_distance"
 

@@ -180,17 +180,7 @@ def _make_handler(
                 self.end_headers()
 
         def do_POST(self) -> None:
-            """
-            POST /record  - preferred over GET /record for semantic correctness.
-
-            HTTP GET must be idempotent and safe (no side effects). Recording a
-            selection is a state mutation; it belongs on POST. Browser prefetch,
-            link scanners, and crawlers will not automatically issue POST requests,
-            so using POST prevents accidental history pollution.
-
-            Body: application/x-www-form-urlencoded or query string on the URL.
-            Returns: {"recorded": true|false}
-            """
+            """POST /record - state mutation, so POST not GET. Returns {"recorded": true|false}."""
             parsed = urlparse(self.path)
             path = parsed.path
             qs = parse_qs(parsed.query)
@@ -257,20 +247,7 @@ def run(
     preset: str = "production",
     no_browser: bool = False,
 ) -> None:
-    """
-    Start the interactive demo server and open it in the default browser.
-
-    Parameters:
-        engine:     The engine to use for suggestions and explanations.
-        host:       Host interface to bind to.  Default ``"127.0.0.1"`` binds
-                    to localhost only (safe for local use).  Pass
-                    ``"0.0.0.0"`` to listen on all interfaces - required
-                    when running inside Docker so the container port is
-                    reachable from the host machine.
-        port:       Preferred local port.  If occupied, a free port is used.
-        preset:     Name of the active preset (display only).
-        no_browser: If True, print the URL but do not open the browser.
-    """
+    """Start a local demo server and open it in the browser. host="0.0.0.0" for Docker use."""
     port = _find_free_port(port, host)
     # When bound to all interfaces, show 127.0.0.1 in the browser URL so
     # clicking it from the local machine actually works.

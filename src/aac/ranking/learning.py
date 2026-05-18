@@ -12,40 +12,17 @@ from aac.ranking.explanation import RankingExplanation
 
 class LearningRanker(Ranker, LearnsFromHistory):
     """
-    Ranker that adapts suggestion ordering based on user selection history.
+    Boosts suggestions the user has previously selected, causing them to rise
+    in the ranked output over time.
 
-    Applies a linear boost to suggestions that the user has selected before,
-    causing them to rise in the ranked output over time.
-
-    When to use:
-        Use LearningRanker when your predictor stack does not already
-        incorporate history as a prediction signal. For example, pairing
-        LearningRanker with FrequencyPredictor alone gives you a clean
-        separation: frequency drives candidate generation, history drives
-        re-ranking.
-
-        If your engine includes HistoryPredictor, that predictor already
-        emits history-scored candidates at the prediction layer. Adding
-        LearningRanker on top would count history twice - once in prediction
-        scores and again in the ranking boost. In that configuration, omit
-        LearningRanker and rely on HistoryPredictor's weight instead.
-
-    Learning model:
         boost = min(count * boost_param, dominance_ratio * base_score)
-        final_score = base_score + boost
 
-    Invariants:
-    - No history signal => original order preserved
-    - Learning is additive (never suppresses candidates)
-    - Learning influence is bounded by dominance_ratio
-    - Deterministic and stable
-    - Does not mutate inputs or history
+    If your engine already includes HistoryPredictor, don't add this ranker -
+    history would be counted twice. Use it when FrequencyPredictor is the only
+    predictor and you want learning at the ranking layer instead.
 
-    Performance:
-        ``rank()`` and ``explain()`` share a single ``counts_for_prefix()``
-        call per prefix.  When the engine calls both in sequence - as
-        ``explain()`` does - the history lookup runs once, not twice.
-        The cache is keyed by prefix and invalidated on every ``rank()`` call.
+    rank() and explain() share one counts_for_prefix() call per prefix.
+    Cache is invalidated at the start of each rank() call.
     """
 
     def __init__(
@@ -85,9 +62,6 @@ class LearningRanker(Ranker, LearnsFromHistory):
         return counts
 
     def _invalidate_cache(self) -> None:
-        """Mark cache as stale.  Called at the start of rank() so explain() reuses
-        the counts fetched during that rank() call, but the next rank() call always
-        re-fetches in case history was updated between calls."""
         self._cache_valid = False
 
     # --- learning internals ---
@@ -129,16 +103,7 @@ class LearningRanker(Ranker, LearnsFromHistory):
         index: int,
         counts: dict[str, int],
     ) -> tuple[float, int]:
-        """
-        Canonical sort key: (descending final_score, ascending original_index).
-
-        Extracted so rank() and explain() use an identical key function.
-        If the sorting logic ever changes, it changes in one place, and the
-        two methods remain guaranteed to agree on ordering.
-
-        Returns a tuple where the first element is negated (sort ascending
-        on a negative = sort descending on a positive).
-        """
+        """Sort key shared by rank() and explain(): (-final_score, original_index)."""
         final_score = self._compute_adjusted_score(
             value=s.suggestion.value,
             base_score=s.score,
@@ -147,11 +112,7 @@ class LearningRanker(Ranker, LearnsFromHistory):
         return (-final_score, index)
 
     def ranker_config(self) -> dict[str, float]:
-        """Return the parameters needed to reconstruct this ranker.
-
-        Used by WeightOptimiser and engine serialisation to copy ranker
-        configuration without accessing private attributes directly.
-        """
+        """Return parameters needed to reconstruct this ranker."""
         return {
             "boost": self._boost,
             "dominance_ratio": self._dominance_ratio,
@@ -196,8 +157,6 @@ class LearningRanker(Ranker, LearnsFromHistory):
             )
             scored.append((final_score, index, boosted))
 
-        # Stable: use _sort_key to share the exact sort contract with explain().
-        # _sort_key returns (-final_score, index); sort ascending on that tuple.
         scored.sort(key=lambda t: self._sort_key(t[2], t[1], counts))
 
         return [suggestion for _, _, suggestion in scored]
@@ -209,30 +168,13 @@ class LearningRanker(Ranker, LearnsFromHistory):
         prefix: str,
         suggestions: Sequence[ScoredSuggestion],
     ) -> list[RankingExplanation]:
-        # Build a lookup of pre-ranking (pre-boost) scores keyed by value.
-        # We must compute the boost against the pre-boost base_score, not the
-        # post-boost score from rank(). Using the post-boost score in
-        # _compute_history_boost would produce a different (larger) dominance
-        # cap than the one used during rank(), causing the explanation to
-        # be arithmetically inconsistent with the actual ranking decision.
+        # Use pre-boost scores so the dominance cap matches what rank() used.
         pre_boost_scores = {s.suggestion.value: s.score for s in suggestions}
 
-        # Reuse cache from rank() if prefix matches.  Do NOT call self.rank()
-        # here - that would invalidate the cache, defeating the optimisation,
-        # and re-sort the same suggestions a second time.
+        # Reuse the cache populated by rank(); don't call rank() here.
         counts = self._counts(prefix)
 
-        # Produce explanations in the same order rank() produces them.
-        # Using _sort_key() here guarantees that any change to rank()'s
-        # sort logic is automatically reflected in explain() - they share
-        # exactly one definition of the ordering.
-        #
-        # We must sort on the PRE-BOOST scores from pre_boost_scores, not
-        # on suggestion.score (which in the engine pipeline has already had
-        # a ranker's score applied). _sort_key() calls _compute_adjusted_score()
-        # which uses suggestion.score as base_score; so we pass suggestions
-        # as-is from the pre-ranking input, where suggestion.score IS the
-        # pre-boost base score.
+        # Sort using _sort_key() so ordering matches rank() exactly.
         ordered = sorted(
             enumerate(suggestions),
             key=lambda t: self._sort_key(t[1], t[0], counts),
@@ -246,11 +188,7 @@ class LearningRanker(Ranker, LearnsFromHistory):
                 count=count,
                 base_score=base_score,
             )
-            # LearningRanker is a boost ranker: it contributes history signal,
-            # not a base score. Emitting base_score=0.0 ensures that when this
-            # explanation is merged with ScoreRanker's explanation, the merged
-            # base_score equals only ScoreRanker's value (the true pre-ranking
-            # score) - not a doubled sum of both rankers' claims.
+            # base_score=0.0: this ranker contributes boost only, not a base score.
             explanations.append(
                 RankingExplanation(
                     value=s.suggestion.value,
@@ -264,9 +202,3 @@ class LearningRanker(Ranker, LearnsFromHistory):
             )
 
         return explanations
-
-    # explain_as_dicts() is not implemented here - call engine.explain()
-    # The engine's explain_as_dicts() produces the full schema
-    # (base_components, history_components, contribution_pct) by merging
-    # all ranker explanations. A partial version here would give callers
-    # an inconsistent, schema-incomplete result alongside the engine output.

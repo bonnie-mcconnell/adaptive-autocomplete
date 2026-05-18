@@ -584,4 +584,3 @@ class TestDebugMethod:
         engine = _basic_engine()
         state = engine.debug(text="he")
         assert state["suggestions"] == engine.suggest("he")
-

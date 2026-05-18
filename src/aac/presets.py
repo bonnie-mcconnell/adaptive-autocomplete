@@ -31,13 +31,7 @@ PresetBuilder: TypeAlias = Callable[
 
 @dataclass(frozen=True)
 class EnginePreset:
-    """
-    Named, validated engine composition.
-
-    A preset represents intent, not configuration detail.
-    Metadata fields drive describe_presets() output - update them
-    here when adding or changing a preset, not in describe_presets().
-    """
+    """A named, validated engine configuration. Metadata fields populate describe_presets() output."""
 
     name: str
     description: str
@@ -92,24 +86,7 @@ def _default_engine(
     history: History | None,
     vocabulary: Mapping[str, int] | None = None,
 ) -> AutocompleteEngine:
-    """
-    Frequency + history learning at the prediction layer.
-
-    Learning happens by weighting HistoryPredictor alongside
-    FrequencyPredictor. No ranking-layer boost; history influence
-    appears in the base score rather than as a separate column in
-    explain() output.
-
-    Weight rationale:
-        Both predictors emit log-normalised scores in (0, 1].
-        FrequencyPredictor(weight=1.0) contributes up to 1.0 to the
-        combined score.  HistoryPredictor(weight=1.5) contributes up to
-        1.5.  A word selected even once scores log(2)/log(2) = 1.0 from
-        HistoryPredictor, which after the 1.5× weight gives 1.5 - enough
-        to overcome the frequency signal for all but the most common words.
-        After a few selections the history signal dominates, which is the
-        intended behaviour.
-    """
+    """Frequency + history at the prediction layer. No decay; history appears in the base score."""
     history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
 
@@ -135,22 +112,7 @@ def _recency_boosted_engine(
     history: History | None,
     vocabulary: Mapping[str, int] | None = None,
 ) -> AutocompleteEngine:
-    """
-    Frequency + history with exponential recency decay at ranking time.
-
-    DecayRanker applies a time-weighted boost at ranking time so recent
-    selections outweigh old ones. The decay half-life is 1 hour: a
-    selection made 1 hour ago contributes half the boost of one made now.
-    History boost appears separately in explain() output.
-
-    Weight rationale:
-        FrequencyPredictor and HistoryPredictor are given equal weight (1.0)
-        so neither dominates at the prediction layer - the DecayRanker
-        (weight=2.0) provides the recency signal that breaks ties.  The 2.0
-        weight means a very-recent single selection contributes a boost of
-        up to 2.0, enough to push a history-matched word above any
-        frequency-only candidate.
-    """
+    """Frequency + history with 1-hour exponential recency decay at ranking time."""
     history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
 
@@ -185,29 +147,7 @@ def _robust_engine(
     history: History | None,
     vocabulary: Mapping[str, int] | None = None,
 ) -> AutocompleteEngine:
-    """
-    SymSpell-based typo recovery. Fast at any vocabulary size.
-
-    Uses a delete-neighbourhood index (SymSpell algorithm) for O(1) average
-    typo recovery. At 48k words and max_distance=2: ~0.4ms/call - 150x
-    faster than the previous BK-tree implementation.
-
-    Construction cost: ~1.5s at 48k words (one-time, at engine creation).
-    Memory: ~50MB for the delete-neighbourhood map at 48k words.
-
-    Handles 1-3 character prefixes correctly (unlike TrigramPredictor which
-    requires prefix length >= 4).
-
-    Weight rationale:
-        All predictors emit log-normalised scores in (0, 1].
-        SymSpellPredictor(weight=0.4): weight kept low - it fires on
-        every prefix (including exact matches) and would swamp the frequency
-        signal if given a high weight.  0.4 means a perfect typo-corrected
-        match contributes 0.4 to the combined score, enough to promote a
-        corrected word above a low-frequency exact match, but not above
-        a high-frequency one.  HistoryPredictor(weight=1.2) is slightly
-        higher than frequency to give user selection history a mild edge.
-    """
+    """SymSpell typo recovery (~0.4ms/query, works on 1-3 char prefixes) + recency decay."""
     history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
 
@@ -301,28 +241,9 @@ def _production_engine(
     """
     Hybrid typo recovery: SymSpell for 1-3 char prefixes, trigram for 4+.
 
-    Neither approach alone covers the full input range well:
-
-    - TrigramPredictor: ~600µs/call, excellent discrimination at 4+ chars,
-      but returns nothing for 1-3 char prefixes where trigrams are too sparse.
-
-    - SymSpellPredictor: ~400µs/call, O(1) average query, correct at any
-      prefix length - but at max_distance=2 over 48k words it generates a
-      large candidate shortlist for very short queries, adding noise.
-
-    The hybrid uses each where it performs best: SymSpell fills the 1-3 char
-    gap where trigram is silent, trigram takes over at 4+ chars where it's
-    fast and precise. Both run all the time; at 4+ chars SymSpell contributes
-    an additive signal that rarely conflicts with trigram - it's consistent
-    enough to leave active rather than switching between strategies.
-
-    Weight rationale:
-        FrequencyPredictor(weight=1.0) and HistoryPredictor(weight=1.2) set
-        the base signal. SymSpellPredictor(weight=0.35) and
-        TrigramPredictor(weight=0.4) are kept low - they are typo
-        recovery signals, not primary ranking signals. At short prefixes,
-        SymSpell provides the only typo signal and its 0.35 weight is enough
-        to surface a corrected word above a low-frequency exact match.
+    TrigramPredictor returns nothing below 4 chars; SymSpell covers the gap.
+    Both run on longer prefixes - SymSpell's additive signal rarely conflicts
+    with trigram and is consistent enough to leave active.
     """
     history = history if history is not None else History()
     frequencies = vocabulary or _get_default_vocabulary()
@@ -434,10 +355,7 @@ PRESETS: dict[str, EnginePreset] = {
 
 
 def available_presets() -> list[str]:
-    # bktree is retained in PRESETS for internal benchmarking but excluded
-    # from the public listing.  It degrades to O(n) at 48k+ words and is
-    # not suitable for production use.  Users who need it can call
-    # create_engine("bktree") directly.
+    # bktree is excluded from the public listing - it degrades to O(n) at scale.
     return sorted(name for name in PRESETS if name != "bktree")
 
 
@@ -459,47 +377,11 @@ def create_engine(
     thread_safe: bool = False,
 ) -> AutocompleteEngine:
     """
-    Build an engine from a named preset with the bundled vocabulary.
+    Build an engine from a named preset.
 
-    Parameters:
-        preset:      Name of the preset (see ``available_presets()``).
-        vocabulary:  Custom word-frequency mapping.  If omitted, the bundled
-                     48 k-word English corpus is used.
-        history:     Existing ``History`` instance to attach for learning and
-                     persistence.  Pass the result of
-                     ``JsonHistoryStore(path).load()`` here so the engine reads
-                     and writes the same history that will be saved to disk.
-                     If omitted, a fresh in-memory ``History`` is created.
-        thread_safe: If ``True``, wraps the history in ``ThreadSafeHistory``
-                     before building the engine.  Required when
-                     ``record_selection()`` and ``suggest()`` are called from
-                     multiple threads simultaneously (e.g. a multi-threaded
-                     WSGI server or a FastAPI app with a thread-pool executor).
-                     Has no effect if ``history`` is already a
-                     ``ThreadSafeHistory``.  Default: ``False`` - plain
-                     ``History`` is sufficient for single-threaded use.
-
-    Example - single-threaded persistent engine::
-
-        from aac.presets import create_engine
-        from aac.storage.json_store import JsonHistoryStore
-        from pathlib import Path
-
-        store = JsonHistoryStore(Path("~/.aac_history.json").expanduser())
-        engine = create_engine("production", history=store.load())
-
-        engine.record_selection("prog", engine.suggest("prog")[0])
-        store.save(engine.history)
-
-    Example - multi-threaded server (FastAPI, Flask, Gunicorn)::
-
-        store = JsonHistoryStore(Path("~/.aac_history.json").expanduser())
-        engine = create_engine(
-            "production",
-            history=store.load(),
-            thread_safe=True,
-        )
-        # engine.history is now ThreadSafeHistory; safe from any thread.
+    vocabulary: custom word->freq mapping; defaults to bundled 48k English corpus.
+    history: pass JsonHistoryStore(path).load() to persist learning across runs.
+    thread_safe: wraps history in ThreadSafeHistory for concurrent use.
     """
     from aac.domain.thread_safe_history import ThreadSafeHistory
 
@@ -510,13 +392,7 @@ def create_engine(
 
 
 def describe_presets() -> str:
-    """
-    Human-readable description of all available presets.
-
-    Intended for CLI and documentation output.
-    Descriptions are derived from EnginePreset metadata fields,
-    not hardcoded - update the PRESETS registry to change output.
-    """
+    """Return a human-readable description of all available presets."""
     lines: list[str] = []
 
     for name in available_presets():
@@ -532,30 +408,7 @@ def describe_presets() -> str:
 
 
 class PresetComparison:
-    """
-    Side-by-side explanation data across multiple presets for one query.
-    See ``compare_presets()`` to build one.
-
-    Attributes:
-        text:     The query prefix that was compared.
-        presets:  The preset names that were compared, in the order given.
-        rows:     One row per unique suggestion, in order of first appearance
-                  across all preset results.  Each row is a dict:
-
-                    {
-                      "value":        str,          # the suggestion
-                      "ranks":        {preset: int | None},
-                      "base_scores":  {preset: float | None},
-                      "boosts":       {preset: float | None},
-                      "finals":       {preset: float | None},
-                    }
-
-                  A value of ``None`` means the suggestion was not returned
-                  by that preset for this query.
-
-    Use ``to_table()`` for a plain-text summary, or access ``rows`` directly
-    for structured output (CLI flags, JSON APIs, Jupyter notebooks).
-    """
+    """Side-by-side ranking data for one query across multiple presets."""
 
     def __init__(
         self,
@@ -568,15 +421,7 @@ class PresetComparison:
         self.rows = rows
 
     def to_table(self, *, limit: int | None = None) -> str:
-        """
-        Return a plain-text comparison table.
-
-        Each row is one suggestion; columns show rank, base score, boost,
-        and final score for each preset side-by-side.
-
-        Parameters:
-            limit: Maximum rows to include.  Defaults to all rows.
-        """
+        """Return a plain-text comparison table, one suggestion per row."""
         rows = self.rows[:limit] if limit is not None else self.rows
         if not rows:
             return f"No suggestions for {self.text!r} in any preset."
@@ -639,31 +484,14 @@ _ENGINE_CACHE: dict[str, AutocompleteEngine] = {}
 
 
 def _get_cached_engine(preset_name: str) -> AutocompleteEngine:
-    """
-    Return a cached engine for the given preset, building it if needed.
-
-    The cached engine always has an empty history (no learning state),
-    making it suitable for compare_presets() which needs consistent,
-    isolated engines. Do not use the cached engine directly for recording
-    selections - it is shared across all compare_presets() calls.
-    """
+    """Return a module-level cached engine for compare_presets(). Always has empty history."""
     if preset_name not in _ENGINE_CACHE:
         _ENGINE_CACHE[preset_name] = create_engine(preset_name)
     return _ENGINE_CACHE[preset_name]
 
 
 def warm_cache(preset_names: list[str] | None = None) -> None:
-    """
-    Pre-build engines for the given presets (or all public presets).
-
-    Call this at application startup to avoid the first-call latency spike
-    in compare_presets(). Building all 5 preset engines takes ~8 seconds.
-
-    Example::
-
-        import threading
-        threading.Thread(target=warm_cache, daemon=True).start()
-    """
+    """Pre-build preset engines to avoid first-call latency in compare_presets() (~8s for all presets)."""
     names = preset_names if preset_names is not None else available_presets()
     for name in names:
         _get_cached_engine(name)
@@ -678,46 +506,10 @@ def compare_presets(
     limit: int = 10,
 ) -> PresetComparison:
     """
-    Compare suggestion rankings and score breakdowns across multiple presets.
+    Run explain() across multiple presets and return a side-by-side PresetComparison.
 
-    Builds one engine per preset, runs ``explain()`` on each, and returns a
-    ``PresetComparison`` with side-by-side scores for every suggestion that
-    appears in any preset's results.
-
-    Useful for questions like: "Would switching to ``production`` change my
-    top-5?" or "Which preset surfaces 'receive' for the typo 'recieve'?"
-
-    Parameters:
-        text:       The query prefix to compare.
-        presets:    Preset names to compare.  Defaults to all public presets
-                    (``available_presets()``).
-        vocabulary: Custom vocabulary shared across all preset engines.
-                    If None, the bundled 48k English corpus is used.
-        history:    History shared across all preset engines.  If None, each
-                    engine starts with an empty history - so rankings reflect
-                    only frequency and typo-recovery signals, not learning.
-                    Pass a loaded History to compare presets under real usage.
-        limit:      Maximum suggestions to include per preset.  Default: 10.
-
-    Returns:
-        A ``PresetComparison`` with ``rows`` (structured data) and
-        ``to_table()`` (human-readable summary).
-
-    Example::
-
-        cmp = compare_presets("recieve", ["stateless", "production"])
-        print(cmp.to_table())
-
-        # Check whether 'receive' is recovered by all presets
-        for row in cmp.rows:
-            if row["value"] == "receive":
-                print(row["finals"])  # {preset: score or None}
-
-    Notes:
-        Building engines with full-scale SymSpell or trigram indexes takes
-        ~1–2 seconds per engine.  ``compare_presets()`` is intended for
-        offline analysis, not hot-path request handling.  Cache the results
-        or run comparisons in a background job.
+    First call per preset takes ~1-2s to build indexes; results are cached.
+    Intended for offline analysis, not hot-path use.
     """
     preset_names = presets if presets is not None else available_presets()
 

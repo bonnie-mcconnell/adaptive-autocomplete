@@ -15,23 +15,7 @@ from aac.domain.types import (
 
 
 class HistoryPredictor(Predictor):
-    """
-    Recall-based predictor driven by user selection history.
-
-    Emits candidates previously selected by the user for the current prefix.
-
-    Score model:
-        Scores are log-normalised to (0, 1] relative to the most-selected
-        value for this prefix:
-
-            score = log(1 + count) / log(1 + max_count_for_prefix)
-
-        Log-normalised to (0, 1] to match FrequencyPredictor's range,
-        so weights in WeightedPredictor are directly comparable. A weight
-        of 1.5 means 1.5× the frequency signal, not 1.5 raw counts.
-
-    Confidence reflects dominance among historical matches.
-    """
+    """Suggests previously-selected values, scored by log-normalised selection count."""
 
     name = "history"
 

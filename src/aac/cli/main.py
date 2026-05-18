@@ -85,11 +85,6 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # Global --history-path so it can be placed before the subcommand.
-    # Each subcommand also accepts --history-path via _add_shared_args() for
-    # users who prefer the subcommand-local form. argparse resolves the
-    # conflict with parse_known_args; we use set_defaults to let the
-    # subcommand value win when both are supplied.
     parser.add_argument(
         "--history-path",
         type=Path,
@@ -140,7 +135,7 @@ def main() -> None:
     )
     suggest_p.add_argument(
         "--confidence", action="store_true", default=False,
-        help="Include normalised confidence scores (0–1) alongside each suggestion",
+        help="Include normalised confidence scores (0-1) alongside each suggestion",
     )
     _add_shared_args(suggest_p)
 
@@ -390,10 +385,6 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Resolve history_path: subcommand-local --history-path wins; global fallback
-    # lets users write `aac --history-path /path record he hello` (global form).
-    # We compare against DEFAULT_HISTORY_PATH rather than hasattr() because every
-    # subcommand with _add_shared_args() already has history_path set to the default.
     local_is_default = (
         not hasattr(args, "history_path")
         or args.history_path == DEFAULT_HISTORY_PATH
@@ -676,12 +667,6 @@ def _run_tune(args: argparse.Namespace, engine: AutocompleteEngine) -> None:
 
     opt = WeightOptimiser(harness, metric=args.metric, verbose=True)
 
-    # Default weight search space for built-in predictors.
-    # Key names must match predictor.name as returned by engine.describe().
-    # AdaptiveSymSpellPredictor.name == "symspell" (not "adaptive_symspell") so
-    # that explain() base_components and EngineConfig serialisation are consistent
-    # whether the engine uses SymSpellPredictor or AdaptiveSymSpellPredictor.
-    # Filtered below to only include predictors present in the target preset.
     full_weight_grid = {
         "frequency": [0.5, 0.8, 1.0, 1.5, 2.0],
         "history":   [0.8, 1.0, 1.2, 1.5, 2.0],
@@ -689,17 +674,12 @@ def _run_tune(args: argparse.Namespace, engine: AutocompleteEngine) -> None:
         "trigram":   [0.2, 0.4, 0.6, 0.8],
     }
 
-    # Build the engine template once to discover which predictors exist in this preset.
-    # This also pre-warms the optimiser's predictor cache.
     opt._get_base_weighted_predictors(preset)
     preset_predictor_names = {
         wp.predictor.name
         for wp in opt._predictor_cache[preset]
     }
 
-    # Filter: only tune predictors that exist in the preset.
-    # Tuning 'symspell' weight on 'stateless' (which has no symspell predictor)
-    # would produce confusing output showing 0-impact weight changes.
     weight_grid = {
         name: vals
         for name, vals in full_weight_grid.items()

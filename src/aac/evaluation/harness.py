@@ -1,33 +1,4 @@
-"""
-EvaluationHarness: run an engine against a labelled query log.
-
-The harness evaluates a fully-configured engine on a QueryLog and
-returns an EvaluationResult with per-metric, per-preset, and
-per-query-length breakdowns.
-
-Typical use
------------
-::
-
-    from aac.evaluation import EvaluationHarness, make_query_log_from_history
-    from aac.presets import create_engine
-
-    engine = create_engine("production")
-    log = make_query_log_from_history(engine.history, min_count=2)
-    result = EvaluationHarness(log).run(engine)
-    print(result.summary())
-    print(result.to_markdown_table())
-
-Design notes
-------------
-- The harness is stateless after construction: ``run()`` can be called
-  multiple times with different engines without rebuilding the harness.
-- Query log entries where the engine returns no results are counted as
-  zero-score queries, not skipped. Skipping them would inflate metrics.
-- The ``k`` parameter defaults to 10, matching standard IR evaluation.
-  Use k=1 to evaluate "does the top result matter?", k=5 for typical
-  autocomplete dropdowns.
-"""
+"""EvaluationHarness: evaluate an engine against a labelled query log."""
 from __future__ import annotations
 
 import statistics
@@ -63,20 +34,7 @@ class QueryResult:
 
 @dataclass
 class EvaluationResult:
-    """
-    Aggregated evaluation result for a full query log.
-
-    Attributes:
-        query_results: Per-query results (one per QueryLogEntry).
-        k:             Evaluation depth.
-        n_queries:     Number of queries evaluated.
-        mean_precision: Mean P@k across all queries.
-        mean_recall:    Mean R@k across all queries.
-        mean_mrr:       Mean Reciprocal Rank @ k.
-        mean_ndcg:      Mean NDCG@k.
-        mean_ap:        Mean Average Precision@k.
-        hit_rate:       Fraction of queries with at least one relevant result.
-    """
+    """Aggregated evaluation result for a full query log."""
     query_results: list[QueryResult]
     k: int
     n_queries: int
@@ -143,33 +101,7 @@ class EvaluationResult:
 
 
 class EvaluationHarness:
-    """
-    Evaluate an engine against a labelled query log.
-
-    The harness is constructed once and can evaluate multiple engines
-    without rebuilding. Reuse one harness across multiple engines
-    to compare them on an identical query log.
-
-    Parameters:
-        query_log: The labelled dataset. See ``aac.evaluation.datasets``.
-        k:         Evaluation depth (default: 10). Only the first k
-                   results from each suggest() call are scored.
-
-    Example::
-
-        from aac.evaluation import EvaluationHarness, make_synthetic_query_log
-        from aac.data import load_english_frequencies
-        from aac.presets import create_engine
-
-        vocab = list(load_english_frequencies().keys())
-        log = make_synthetic_query_log(vocab[:500], prefix_lengths=[2, 3])
-        harness = EvaluationHarness(log)
-
-        for preset in ["stateless", "default", "production"]:
-            engine = create_engine(preset)
-            result = harness.run(engine)
-            print(f"{preset:12s}: {result.summary()}")
-    """
+    """Evaluate an engine against a labelled query log. Build once, run against multiple engines."""
 
     def __init__(self, query_log: QueryLog, *, k: int = 10) -> None:
         if not query_log:
@@ -201,15 +133,7 @@ class EvaluationHarness:
         min_count: int = 1,
         max_entries: int | None = None,
     ) -> EvaluationHarness:
-        """
-        Build a harness directly from a History instance.
-
-        Convenience constructor that calls ``make_query_log_from_history()``
-        and wraps the result in a harness.
-
-        Raises:
-            ValueError: If the history has no entries meeting min_count.
-        """
+        """Build a harness from a History instance. Raises ValueError if no entries meet min_count."""
         from aac.domain.history import History
         from aac.evaluation.datasets import make_query_log_from_history
         if not isinstance(history, History):
@@ -230,18 +154,7 @@ class EvaluationHarness:
         return cls(log, k=k)
 
     def run(self, engine: AutocompleteEngine) -> EvaluationResult:
-        """
-        Evaluate the engine against the full query log.
-
-        For each QueryLogEntry, calls ``engine.suggest(prefix, limit=k)``
-        and computes P@k, R@k, MRR@k, NDCG@k, AP@k.
-
-        Entries where the engine returns no results count as zero-score
-        (they are NOT skipped - skipping them would inflate metrics).
-
-        Returns:
-            EvaluationResult with aggregate metrics and per-query details.
-        """
+        """Evaluate the engine against all query log entries. Zero-result queries count as zero score."""
         query_results: list[QueryResult] = []
 
         for entry in self._log:
@@ -297,7 +210,7 @@ def _breakdown_by_length(
     """
     Break down MRR by prefix length.
 
-    Returns {prefix_length: {metric: value}} for prefix lengths 1–6+.
+    Returns {prefix_length: {metric: value}} for prefix lengths 1-6+.
     Useful for understanding whether short prefixes (hard, many candidates)
     or long prefixes (easy, few candidates) are dragging down the aggregate.
     """

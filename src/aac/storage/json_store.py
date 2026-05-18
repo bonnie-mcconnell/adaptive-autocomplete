@@ -23,34 +23,10 @@ class JsonHistoryStore(HistoryStore):
     """
     JSON-backed persistence for History.
 
-    Persists full HistoryEntry objects including timestamps, so that
-    recency-aware rankers (DecayRanker) continue to work correctly
-    after a process restart.
-
-    Format (version 2):
-        {
-          "version": 2,
-          "entries": [
-            {
-              "prefix": "he",
-              "value": "hero",
-              "timestamp": "2024-01-15T09:32:11+00:00"
-            },
-            ...
-          ]
-        }
-
-    Migration:
-        Version 1 files (the old count-only format) are loaded with
-        timestamps set to the Unix epoch, so decay-based rankers treat
-        migrated entries as maximally stale. They contribute counts but
-        carry no recency signal - the safest possible migration.
-
-    Design notes:
-        - Domain objects remain I/O-free; all serialisation lives here.
-        - Malformed entries are skipped, not fatal.
-        - save() uses an atomic temp-file rename so readers always see
-          a complete file, never a partial write.
+    Stores full entries with timestamps (v2 format) so DecayRanker works
+    correctly after restarts. v1 files (count-only) are migrated on load
+    with epoch timestamps - they contribute counts but no recency signal.
+    save() uses atomic rename on POSIX; best-effort backup rotation on Windows.
     """
 
     def __init__(self, path: Path) -> None:
@@ -70,10 +46,7 @@ class JsonHistoryStore(HistoryStore):
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            # File exists but is not valid JSON. This happens when a previous
-            # save was interrupted mid-write on a system without atomic rename
-            # (e.g. Windows crash between delete and rename). Log at WARNING
-            # so ops can investigate; return empty history so the engine starts.
+            # Corrupted file (partial write or external corruption). Start fresh.
             _log.warning(
                 "History file %s is not valid JSON (%s). "
                 "Starting with empty history. Rename or delete the file to silence this.",
@@ -81,8 +54,7 @@ class JsonHistoryStore(HistoryStore):
             )
             return History()
         except OSError as e:
-            # File exists (we checked above) but can't be read.
-            # Log at WARNING - this is likely a permissions or lock issue.
+            # File exists but can't be read (permissions or lock issue).
             _log.warning(
                 "Cannot read history file %s (%s). Starting with empty history.",
                 self._path, e,
@@ -204,9 +176,7 @@ class JsonHistoryStore(HistoryStore):
 # ------------------------------------------------------------------
 
 def _load_data(data: object) -> History:
-    """
-    Dispatch to the appropriate loader based on format version.
-    """
+    """Route to the appropriate loader based on the file format version."""
     if not isinstance(data, dict):
         return History()
 
@@ -221,9 +191,7 @@ def _load_data(data: object) -> History:
 
 
 def _load_v2(data: dict[str, object]) -> History:
-    """
-    Load format version 2: full entries with timestamps.
-    """
+    """Load v2 format: full entries with timestamps."""
     history = History()
     raw_entries = data.get("entries", [])
 
@@ -259,13 +227,7 @@ def _load_v2(data: dict[str, object]) -> History:
 
 
 def _load_v1(data: dict[str, object]) -> History:
-    """
-    Load format version 1: count-only {prefix: {value: count}}.
-
-    Timestamps are set to the Unix epoch so that all migrated entries
-    are treated as maximally stale by decay-based rankers. They still
-    contribute to count-based ranking but carry no recency signal.
-    """
+    """Load v1 count-only format. Timestamps set to epoch so decay treats entries as stale."""
     history = History()
     _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 

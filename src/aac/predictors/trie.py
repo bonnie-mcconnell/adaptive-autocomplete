@@ -14,12 +14,7 @@ from aac.domain.types import (
 
 
 class TrieNode:
-    """
-    A single node in the trie.
-
-    Mutable by design - nodes accumulate children during construction.
-    Not a frozen dataclass because the trie is built incrementally.
-    """
+    """One trie node: children dict, terminal flag, and stored word."""
 
     __slots__ = ("children", "is_terminal", "value")
 
@@ -68,37 +63,10 @@ class Trie:
 
 class TriePrefixPredictor(Predictor):
     """
-    Prefix predictor backed by a trie for O(prefix_length) lookup.
+    Prefix predictor backed by a trie. O(prefix_length) lookup.
 
-    Suitable when you have a word list but no frequency data. Scores
-    all matches equally at 1.0 - combine with a history or frequency
-    predictor for score differentiation. For use cases where frequency
-    data is available, FrequencyPredictor builds its own prefix index
-    and carries per-word scores through the pipeline.
-
-    Ordering:
-        When used alone, all suggestions have equal score (1.0) and the
-        engine's ScoreRanker will sort them in the order they emerge from
-        the trie - which is alphabetical, because ``Trie._collect()``
-        iterates ``sorted(node.children)``.  This is deterministic but
-        arbitrary: "ant" will always rank above "zoo" regardless of
-        frequency or history.
-
-        To get meaningful ordering, combine with FrequencyPredictor or
-        HistoryPredictor:
-
-        - ``FrequencyPredictor`` adds per-word scores so common words
-          rise above rare ones.
-        - ``HistoryPredictor`` adds selection-count scores so recently
-          chosen words rise above alphabetically-early ones.
-        - Without either, equal scores produce alphabetical output.
-
-    Parameters:
-        words:       Iterable of vocabulary words to index.
-        max_results: Maximum candidates returned per query. Default: 100.
-                     Matches ``FrequencyPredictor``'s default. The old default
-                     of 10 silently truncated high-branching prefixes like "s"
-                     (5,000+ words in the English vocabulary).
+    All matches score equally at 1.0; output is alphabetical without a
+    frequency or history predictor alongside it.
     """
 
     name = "trie_prefix"

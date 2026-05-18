@@ -1,30 +1,10 @@
 """
-BK-tree implementation for approximate string matching.
+BK-tree for approximate string matching via Levenshtein distance.
 
-A BK-tree is a metric tree that enables nearest-neighbour queries in
-O(log n) average time for well-distributed metric spaces. It exploits
-the triangle inequality: if a node n is at distance d from query q,
-then any child at key k can only contain matches if |d - k| <= threshold.
-
-Construction:
-    Insert any word as the root. For each subsequent word w, walk the
-    tree: at each node n compute d = distance(w, n.word). If n has no
-    child at key d, store w there. Otherwise recurse into child d.
-    Time: O(n log n) average, O(n^2) worst case (degenerate tree).
-
-Search for query q within threshold t:
-    At each node n with word w, compute d = distance(q, w).
-    If d <= t, w is a result. Recurse into children at keys k where
-    |d - k| <= t. All other subtrees are provably unreachable.
-    Time: O(log n) average for small t; degrades toward O(n) when t
-    is large relative to the string lengths in the tree. At max_distance=2
-    with 4-character prefixes over a 312-word English vocabulary, the
-    search visits approximately 75% of nodes - the pruning is weak
-    because the search ball covers most of the metric space.
-
-References:
-    Burkhard, W.A. and Keller, R.M. (1973). "Some approaches to
-    best-match file searching." Communications of the ACM, 16(4).
+Exploits the triangle inequality to prune subtrees during search.
+O(log n) average; degrades toward O(n) when max_distance is large
+relative to query length. See EditDistancePredictor for the predictor
+wrapper. Ref: Burkhard & Keller (1973), CACM 16(4).
 """
 from __future__ import annotations
 
@@ -32,13 +12,7 @@ from collections.abc import Iterable, Iterator
 
 
 class _Node:
-    """
-    A single node in the BK-tree.
-
-    Each node stores one word and a dict mapping edit-distance keys
-    to child nodes. The key is the Levenshtein distance from this
-    node's word to the child's word at insertion time.
-    """
+    """One node: a word and children keyed by Levenshtein distance at insertion time."""
 
     __slots__ = ("word", "children")
 
@@ -49,12 +23,8 @@ class _Node:
 
 class BKTree:
     """
-    BK-tree over Levenshtein distance.
-
-    Supports approximate string matching queries. All words within
-    max_distance Levenshtein edits of the query are returned, including
-    cases where the first character differs - a property that simpler
-    first-character indexes do not provide.
+    BK-tree for approximate string matching. Returns all words within
+    max_distance Levenshtein edits of a query, including first-char differences.
 
     Usage:
         tree = BKTree(words)

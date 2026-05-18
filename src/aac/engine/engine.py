@@ -43,13 +43,7 @@ _RANK_DECAY_RATE: float = 0.4
 
 
 class DebugState(TypedDict):
-    """
-    Internal debug surface.
-
-    WARNING:
-        Values reference live internal objects.
-        Returned data MUST NOT be mutated.
-    """
+    """Internal debug surface. Do not mutate returned objects."""
 
     input: str
     scored: list[ScoredSuggestion]
@@ -63,12 +57,7 @@ class _PredictorInfo(TypedDict):
 
 
 class DescribeState(TypedDict):
-    """
-    Return type of AutocompleteEngine.describe().
-
-    Fully typed so callers (tests, CLI, tooling) get precise
-    type information rather than dict[str, object].
-    """
+    """Return type of AutocompleteEngine.describe()."""
 
     predictors: list[_PredictorInfo]
     rankers: list[str]
@@ -76,18 +65,7 @@ class DescribeState(TypedDict):
 
 
 class AutocompleteEngine:
-    """
-    Orchestrates prediction, ranking, learning, and explanation.
-
-    Only documented methods are stable API. Internal methods are subject
-    to change without notice.
-
-    Invariants enforced at runtime:
-    - Rankers may reorder and rescore suggestions, but not add or remove them
-    - All scores are finite
-    - Explanation final_score == base_score + history_boost (enforced in __post_init__)
-    - History is a single shared object across engine and all learning rankers
-    """
+    """Orchestrates prediction, ranking, learning, and explanation."""
 
     def __init__(
         self,
@@ -153,12 +131,7 @@ class AutocompleteEngine:
         self,
         ctx: CompletionContext,
     ) -> list[ScoredSuggestion]:
-        """
-        Collect and aggregate scored suggestions from all predictors.
-
-        Aggregation is additive across predictors and weights.
-        Predictor explanations are preserved but not interpreted here.
-        """
+        """Aggregate scored suggestions from all predictors (additive weighting)."""
         aggregated, _ = self._score_with_breakdown(ctx)
         return aggregated
 
@@ -166,17 +139,7 @@ class AutocompleteEngine:
         self,
         ctx: CompletionContext,
     ) -> tuple[list[ScoredSuggestion], dict[str, dict[str, float]]]:
-        """
-        Like _score(), but also returns a per-predictor weighted contribution map.
-
-        Returns:
-            (suggestions, breakdown) where breakdown[value][predictor_name]
-            is the weighted score that predictor contributed for that value.
-
-        Used by explain() to build base_components without parsing trace strings.
-        Trace strings are human-readable and must not be treated as structured data -
-        predictor names are arbitrary and may contain any characters.
-        """
+        """Like _score(), but also returns breakdown[value][predictor_name] = weighted_score."""
         aggregated: dict[str, ScoredSuggestion] = {}
         breakdown: dict[str, dict[str, float]] = {}
 
@@ -223,16 +186,7 @@ class AutocompleteEngine:
         """
         Enforce the ranker set-preservation invariant.
 
-        Rankers may reorder and rescore suggestions but must not add or
-        remove entries.  Calling this after every ranker step ensures any
-        violation is caught immediately and names the offending ranker.
-
-        Extracted as a static method so both ``_apply_ranking()`` and
-        ``explain()`` share exactly the same check with no code duplication.
-        If the invariant description ever changes it changes in one place.
-
-        Raises:
-            RuntimeError: If the ranker added or removed any suggestion.
+        Raises RuntimeError naming the offender if the ranker changed the candidate set.
         """
         before_values = {s.suggestion.value for s in before}
         after_values = {s.suggestion.value for s in after}
@@ -249,16 +203,7 @@ class AutocompleteEngine:
         ctx: CompletionContext,
         scored: list[ScoredSuggestion],
     ) -> list[ScoredSuggestion]:
-        """
-        Apply rankers while enforcing engine invariants.
-
-        Rankers may reorder or rescore suggestions, but must not add or
-        remove entries.
-
-        Raises:
-            RuntimeError: If a ranker adds or removes suggestions.
-            ValueError: If a ranker produces a non-finite score.
-        """
+        """Apply all rankers in sequence, enforcing the set-preservation invariant."""
         ranked = scored
 
         for ranker in self._rankers:
@@ -279,42 +224,18 @@ class AutocompleteEngine:
     # ------------------------------------------------------------------
 
     def suggest(self, text: str, *, limit: int | None = None) -> list[str]:
-        """
-        Return ranked suggestion strings for user-facing consumption.
-
-        Parameters:
-            text:  The input prefix to complete.
-            limit: Maximum number of suggestions to return.  If omitted,
-                   all suggestions from the predictors are returned.
-                   Equivalent to ``engine.suggest(text)[:limit]`` but
-                   avoids constructing the full list when only the top-N
-                   are needed.
-
-        Scores and explanations are not in the return type.
-        Use explain() or predict_scored() for introspection.
-        """
+        """Return ranked suggestion strings for a prefix. Use explain() for scores."""
         ctx = CompletionContext(text)
         ranked = self._apply_ranking(ctx, self._score(ctx))
         values = [s.suggestion.value for s in ranked]
         return values[:limit] if limit is not None else values
 
     def predict_scored(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
-        """
-        Return ranked scored suggestions.
-
-        Intended for testing, benchmarking, and engine-level inspection.
-        Guarantees: ranking invariants enforced, deterministic ordering,
-        finite scores.
-        """
+        """Ranked ScoredSuggestion list. For testing and inspection."""
         return self._apply_ranking(ctx, self._score(ctx))
 
     def _predict_scored_unranked(self, ctx: CompletionContext) -> list[ScoredSuggestion]:
-        """
-        INTERNAL: Return scored suggestions WITHOUT ranking.
-
-        Does not apply rankers or enforce ranking invariants.
-        Intended for diagnostics and internal inspection only.
-        """
+        """Return scored suggestions without ranking. Diagnostics only."""
         return self._score(ctx)
 
     # ------------------------------------------------------------------
@@ -322,19 +243,7 @@ class AutocompleteEngine:
     # ------------------------------------------------------------------
 
     def explain(self, text: str) -> list[RankingExplanation]:
-        """
-        Return per-suggestion ranking explanations in final ranked order.
-
-        Explanations are built in one forward pass through the pipeline:
-
-        1. ``_score_with_breakdown()`` captures per-predictor contributions
-           before any ranker runs - the base score.
-        2. For each ranker, the score delta (post - pre) is recorded per
-           suggestion as that ranker's contribution.
-
-        explain() costs the same as suggest() - one pipeline run, not two.
-        Returns explanations ordered by final ranked position.
-        """
+        """Return per-suggestion RankingExplanation objects in final ranked order."""
         ctx = CompletionContext(text)
 
         # Pre-ranking predictor scores with per-predictor breakdown.
@@ -434,28 +343,7 @@ class AutocompleteEngine:
         return explanations
 
     def explain_as_dicts(self, text: str) -> list[dict[str, object]]:
-        """
-        Convenience adapter for CLI and serialisation layers.
-
-        Returns per-suggestion dicts with top-level score fields and, when
-        multiple rankers contributed, a ``components`` breakdown showing each
-        ranker's individual contribution.  The ``source`` field names the
-        composite when more than one ranker contributed, rather than silently
-        preserving the name of the first ranker.
-
-        Schema::
-
-            {
-                "value":               str,
-                "base_score":          float,
-                "history_boost":       float,
-                "final_score":         float,
-                "sources":             [str, ...],
-                "base_components":     {str: float},
-                "history_components":  {str: float},
-                "contribution_pct":    {str: float},
-            }
-        """
+        """explain() as plain dicts - for CLI and JSON serialisation."""
         results: list[dict[str, object]] = []
         for e in self.explain(text):
             all_sources = list(e.base_components.keys()) + [
@@ -485,32 +373,7 @@ class AutocompleteEngine:
         *,
         limit: int | None = None,
     ) -> list[tuple[str, int]]:
-        """
-        Return ranked suggestions paired with their raw selection counts.
-
-        Each suggestion is paired with the number of times the user has
-        selected it for this prefix.  A count of 0 means the suggestion
-        comes from frequency or typo-recovery signals, not from recorded
-        history.
-
-        Use when you need to show a count badge or "recently used" marker
-        next to suggestions in a UI. Calling ``suggest()`` and
-        ``history.counts_for_prefix()`` separately requires two calls and
-        risks the rankings diverging if history is updated between them.
-
-        Parameters:
-            text:  The input prefix to complete.
-            limit: Maximum number of suggestions to return.
-
-        Returns:
-            List of ``(suggestion, count)`` pairs in ranked order.
-
-        Example::
-
-            for word, count in engine.suggest_with_history("prog", limit=5):
-                badge = f"({count})" if count > 0 else ""
-                print(f"{word} {badge}")
-        """
+        """Return (suggestion, selection_count) pairs. Count 0 means no history for this value."""
         ctx = CompletionContext(text)
         ranked = self._apply_ranking(ctx, self._score(ctx))
         if limit is not None:
@@ -530,32 +393,7 @@ class AutocompleteEngine:
         *,
         limit: int | None = None,
     ) -> list[dict[str, object]]:
-        """
-        Return ranked suggestions with count and confidence in a single pipeline pass.
-
-        Combines ``suggest_with_history()`` and ``suggest_with_confidence()``
-        into one call so the pipeline runs exactly once. Each result is a dict
-        with keys ``word`` (str), ``count`` (int), and ``confidence`` (float).
-
-        Use this when you need all three signals - for example in a demo UI
-        that shows a count badge and a confidence bar alongside each suggestion.
-        Calling ``suggest_with_history`` and ``suggest_with_confidence``
-        separately runs the full score → rank pipeline twice, which doubles
-        SymSpell lookups, trigram lookups, and decay calculations per request.
-
-        Parameters:
-            text:  The input prefix to complete.
-            limit: Maximum number of suggestions to return.
-
-        Returns:
-            List of ``{"word": str, "count": int, "confidence": float}`` dicts
-            in ranked order.
-
-        Example::
-
-            for item in engine.suggest_full("prog", limit=10):
-                print(f"{item['word']}  ({item['count']})  {item['confidence']:.0%}")
-        """
+        """suggest_with_history + suggest_with_confidence in one pipeline pass."""
         ctx = CompletionContext(text)
         ranked = self._apply_ranking(ctx, self._score(ctx))
         if limit is not None:
@@ -597,36 +435,11 @@ class AutocompleteEngine:
         limit: int | None = None,
     ) -> list[tuple[str, float]]:
         """
-        Return ranked suggestions with normalised confidence scores.
+        Return (suggestion, confidence) pairs where confidence is in (0, 1].
 
-        Each suggestion is paired with a confidence value in (0, 1] where
-        1.0 means the top-ranked candidate.
-
-        Normalisation:
-
-        Raw score division (score / top_score) becomes misleading when
-        history learning creates large score gaps. After 5 selections, the
-        top result may score 9.1 while the second scores 0.57, giving the
-        second a 6% confidence even though it's a strong match.
-
-        Switch point: if the top candidate outscores the second by more than
-        ``_DOMINANCE_THRESHOLD`` (4×), use rank-based weighting -
-        position k gets ``1 / (1 + k * _RANK_DECAY_RATE)``. Below that
-        threshold, raw normalised scores are meaningful and stable.
-
-        Parameters:
-            text:  The input prefix to complete.
-            limit: Maximum number of suggestions to return.
-
-        Returns:
-            List of ``(suggestion, confidence)`` pairs in ranked order.
-
-        Example::
-
-            results = engine.suggest_with_confidence("prog", limit=5)
-            for word, conf in results:
-                label = "\u2605 " if conf > 0.8 else "  "
-                print(f"{label}{word}  ({conf:.0%})")
+        Uses raw score normalisation normally. When the top result dominates
+        by more than _DOMINANCE_THRESHOLD (heavy learning), switches to
+        rank-based decay so alternatives don't look nearly worthless.
         """
         ctx = CompletionContext(text)
         ranked = self._apply_ranking(ctx, self._score(ctx))
@@ -663,26 +476,7 @@ class AutocompleteEngine:
         return results
 
     def reset_history(self) -> None:
-        """
-        Clear all recorded history from the engine's in-memory state.
-
-        Replaces the internal History object with a fresh empty one and
-        propagates the change to all learning rankers and any predictors
-        that expose a ``history`` attribute (e.g. ``HistoryPredictor``).
-
-        This does not modify any persisted store - if you have a
-        ``JsonHistoryStore``, call ``store.save(engine.history)`` after
-        resetting to write the empty history to disk.  Otherwise the next
-        ``store.load()`` will restore the old history.
-
-        Example - reset and persist the cleared state::
-
-            engine.reset_history()
-            store.save(engine.history)
-
-        Typical use cases: testing, user-initiated "forget everything",
-        or switching to a new domain without restarting the process.
-        """
+        """Replace in-memory History with a fresh empty one. Does not touch persisted stores."""
         self._history = History()
 
         # Propagate to learning rankers.
@@ -690,42 +484,17 @@ class AutocompleteEngine:
             if isinstance(ranker, LearnsFromHistory):
                 ranker.history = self._history
 
-        # Propagate to predictors that implement PredictorLearnsFromHistory.
-        # Using the typed protocol rather than hasattr() means only predictors
-        # that explicitly opt in (by implementing the property) are updated.
-        # A predictor with an unrelated attribute named 'history' is not
-        # affected - it must satisfy the full protocol (readable + settable
-        # property returning History) to be updated here.
+        # Propagate to predictors with a reassignable history property.
         for weighted in self._predictors:
             if isinstance(weighted.predictor, PredictorLearnsFromHistory):
                 weighted.predictor.history = self._history
 
     def record_selection(self, text: str, value: str) -> None:
-        """
-        Record a user selection for learning.
-
-        Writes to engine history directly, then calls record(ctx, value)
-        on any predictor that implements that method. This hook exists for
-        predictors that maintain private state beyond the shared History.
-
-        Note: HistoryPredictor reads from the shared History and does not
-        implement a record hook - the engine's direct write is sufficient.
-        Adding a hook to HistoryPredictor would record each selection twice.
-
-        Key invariant:
-            History is keyed by ``ctx.prefix()``, not ``ctx.text``.
-            Lookups in ``counts_for_prefix()`` and ``entries_for_prefix()``
-            use the normalised prefix as the key. Recording under ``ctx.text``
-            (the raw input string) would produce keys that never match lookups,
-            silently disabling the learning signal.
-        """
+        """Record a selection into History and notify any predictor record hooks."""
         ctx = CompletionContext(text)
         self._history.record(ctx.prefix(), value)
 
         for weighted in self._predictors:
-            # runtime_checkable Protocol checks attribute *presence* only, not
-            # type. A predictor with a non-callable .record attribute (e.g. a
-            # string) will pass isinstance() but must not be called.
             if isinstance(weighted.predictor, PredictorAcceptsRecord) and callable(
                 weighted.predictor.record
             ):
@@ -756,35 +525,7 @@ class AutocompleteEngine:
         *,
         limit: int | None = None,
     ) -> dict[str, list[str]]:
-        """
-        Return suggestions for multiple prefixes in one call.
-
-        Equivalent to calling ``suggest()`` on each prefix individually,
-        but expressed as a single API call so callers don't need a loop.
-        Useful for: evaluation pipelines, search dashboards pre-fetching
-        completions for multiple fields, test harnesses.
-
-        Parameters:
-            texts: List of input prefixes to complete.
-            limit: Maximum number of suggestions per prefix.
-
-        Returns:
-            Dict mapping each prefix to its suggestion list.
-            Preserves input order. If a prefix produces no suggestions,
-            its value is an empty list.
-
-        Example::
-
-            results = engine.batch_suggest(
-                ["prog", "hel", "wor"],
-                limit=5,
-            )
-            # {
-            #   "prog": ["programming", "program", ...],
-            #   "hel":  ["help", "hello", "held", ...],
-            #   "wor":  ["word", "world", "work", ...],
-            # }
-        """
+        """suggest() for multiple prefixes. Returns {prefix: suggestions}."""
         return {text: self.suggest(text, limit=limit) for text in texts}
 
     def batch_explain(
@@ -793,25 +534,7 @@ class AutocompleteEngine:
         *,
         limit: int | None = None,
     ) -> dict[str, list[RankingExplanation]]:
-        """
-        Return score explanations for multiple prefixes in one call.
-
-        Equivalent to calling ``explain()`` on each prefix individually.
-        Useful for offline analysis of ranking behaviour across a query set.
-
-        Parameters:
-            texts: List of input prefixes to explain.
-            limit: Maximum number of explanations per prefix.
-
-        Returns:
-            Dict mapping each prefix to its explanation list.
-
-        Example::
-
-            explanations = engine.batch_explain(["prog", "hel"])
-            for prefix, exps in explanations.items():
-                print(f"{prefix}: top={exps[0].value} final={exps[0].final_score:.3f}")
-        """
+        """explain() for multiple prefixes. Returns {prefix: explanations}."""
         result = {}
         for text in texts:
             exps = self.explain(text)
@@ -824,28 +547,7 @@ class AutocompleteEngine:
         *,
         limit: int | None = None,
     ) -> dict[str, list[str]]:
-        """
-        Async version of batch_suggest().
-
-        Schedules each query on the thread pool executor via suggest_async()
-        and awaits all results with asyncio.gather(), keeping the event
-        loop unblocked while queries run. Primary use case: async web
-        frameworks (FastAPI, Starlette) where blocking the event loop
-        degrades all concurrent request handlers.
-
-        **GIL note**: on CPython, pure-Python CPU-bound work does not run in
-        true parallel across threads - threads take turns holding the GIL.
-        batch_suggest_async improves *event-loop responsiveness* but does not
-        reduce *wall-clock latency* for the batch itself compared to a
-        sequential loop.  If you need genuine parallelism for large batches,
-        use ProcessPoolExecutor or run the engine in a worker process.
-
-        Example::
-
-            @app.get("/batch")
-            async def batch(q: list[str]) -> dict[str, list[str]]:
-                return await engine.batch_suggest_async(q, limit=5)
-        """
+        """Async wrapper: runs batch_suggest() with asyncio.gather()."""
         tasks = [self.suggest_async(text, limit=limit) for text in texts]
         results = await asyncio.gather(*tasks)
         return dict(zip(texts, results, strict=False))
@@ -860,24 +562,7 @@ class AutocompleteEngine:
         *,
         limit: int | None = None,
     ) -> list[str]:
-        """
-        Async wrapper around suggest().
-
-        Runs the synchronous suggest() in the default thread pool executor
-        so it does not block the event loop.  Use this in async frameworks
-        (FastAPI, Starlette, aiohttp) to keep request handlers non-blocking.
-
-        ``asyncio.get_running_loop()`` is used rather than the deprecated
-        ``get_event_loop()``.  ``get_running_loop()`` raises ``RuntimeError``
-        if called outside a running coroutine, making misuse explicit rather
-        than silently returning or creating a new loop.
-
-        Example::
-
-            @app.get("/suggest")
-            async def suggest(q: str) -> list[str]:
-                return await engine.suggest_async(q, limit=10)
-        """
+        """Async wrapper: runs suggest() in the thread pool executor."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: self.suggest(text, limit=limit))
 
@@ -896,15 +581,7 @@ class AutocompleteEngine:
     # ------------------------------------------------------------------
 
     def describe(self) -> DescribeState:
-        """
-        Return a typed description of the engine configuration.
-
-        Intended for CLI inspection, debugging, and documentation.
-        ``history_entries`` is the total number of recorded selections across
-        all prefixes.  Reading ``len(self._history)`` directly is
-        intentional: ``entries()`` returns a full tuple copy (O(n) allocation)
-        while ``_entries`` is the underlying list (O(1) len).
-        """
+        """Return a summary of the engine configuration for inspection."""
         return {
             "predictors": [
                 {"name": wp.predictor.name, "weight": wp.weight}
@@ -921,25 +598,7 @@ class AutocompleteEngine:
 
     @property
     def predictors(self) -> list[WeightedPredictor]:
-        """
-        Return a list of the engine's weighted predictors.
-
-        Useful for accessing individual predictors at runtime - for example,
-        to call ``FrequencyPredictor.add_word()`` to extend the vocabulary
-        without rebuilding the engine::
-
-            engine = create_engine("production")
-            freq = next(
-                wp.predictor for wp in engine.predictors
-                if wp.predictor.name == "frequency"
-            )
-            freq.add_word("asyncio", 500)
-
-        The list is a copy of the internal sequence. Appending to it does not
-        modify the engine; to change the predictor set, construct a new engine.
-        Individual predictor objects are the live instances and their mutable
-        state (e.g. the FrequencyPredictor index) is shared with the engine.
-        """
+        """Copy of the engine's weighted predictors. Predictor objects are the live instances."""
         return list(self._predictors)
 
     def to_config(
@@ -948,45 +607,7 @@ class AutocompleteEngine:
         preset: str | None = None,
         metadata: dict[str, object] | None = None,
     ) -> EngineConfig:
-        """
-        Serialise this engine's configuration to an ``EngineConfig``.
-
-        The config captures predictor names, weights, and ranker parameters
-        in a JSON-serialisable form.  Use it to:
-
-        - Deploy the same engine to multiple servers without repeating
-          Python constructor calls.
-        - Audit and diff two engine configurations (``config_a.diff(config_b)``).
-        - Store the engine config alongside vocabulary and history for
-          full operational reproducibility.
-
-        Parameters:
-            preset:   If this engine was built via ``create_engine()``,
-                      pass the preset name here so ``config.build()`` can
-                      use the fast preset reconstruction path.  If None,
-                      ``config.build()`` uses the ``PredictorRegistry``
-                      to reconstruct each predictor by name.
-            metadata: Arbitrary caller-supplied key-value pairs stored
-                      alongside the config (e.g. vocabulary path, deploy
-                      timestamp, git SHA).
-
-        Returns:
-            An ``EngineConfig`` that can be serialised via ``to_json()``
-            and reconstructed via ``EngineConfig.from_json(...).build()``.
-
-        Example::
-
-            config = engine.to_config(
-                preset="production",
-                metadata={"vocabulary": "~/.aac_vocab.json"},
-            )
-            with open("engine_config.json", "w") as f:
-                f.write(config.to_json())
-
-            # On another server:
-            with open("engine_config.json") as f:
-                engine2 = EngineConfig.from_json(f.read()).build()
-        """
+        """Serialise the engine to an EngineConfig for JSON export and reconstruction."""
         from aac.engine.config import EngineConfig, PredictorConfig, RankerConfig
         from aac.ranking.decay import DecayRanker
         from aac.ranking.learning import LearningRanker
@@ -1004,10 +625,6 @@ class AutocompleteEngine:
                     params=r.ranker_config(),
                 ))
             elif isinstance(r, LearningRanker):
-                # ranker_config() returns {"boost": ..., "dominance_ratio": ...}.
-                # Must be serialised explicitly - the else branch below produces
-                # an empty params dict, silently losing non-default configuration
-                # and breaking config round-trips.
                 rankers.append(RankerConfig(
                     name="learning",
                     params=r.ranker_config(),

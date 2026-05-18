@@ -9,20 +9,7 @@ from datetime import datetime, timezone
 
 @dataclass(frozen=True)
 class HistoryEntry:
-    """
-    A single observed completion event.
-
-    Attributes:
-        prefix: The user input prefix at the time of selection.
-        value: The completion value selected by the user.
-        timestamp: When the selection occurred (UTC, timezone-aware).
-
-    Notes:
-        - Entries are immutable once created.
-        - Timestamps are always stored in UTC.
-        - Enables future extensions such as recency decay, session analysis,
-          or time-windowed learning strategies.
-    """
+    """A single completion selection: (prefix, value, timestamp)."""
     prefix: str
     value: str
     timestamp: datetime
@@ -38,35 +25,11 @@ class History:
     """
     Append-only store of user completion events - the shared learning state.
 
-    Design guarantees:
-        - Entries are immutable once recorded
-        - No deletion or in-place mutation
-        - Safe to share across predictors and rankers for *reading*
-        - Persistence-friendly via explicit snapshot export
+    Entries are immutable once recorded; predictors and rankers can safely
+    read concurrently. For concurrent writes, use ThreadSafeHistory.
 
-    Thread safety:
-        Not thread-safe. Concurrent ``record()`` calls from multiple threads
-        risk data races on the internal entry list and prefix index. The note
-        "safe to share across predictors and rankers" means read-only sharing:
-        entries are never mutated or deleted after insertion, so concurrent
-        reads are safe. For concurrent writes, use ``ThreadSafeHistory``.
-
-    Domain representation (HistoryEntry) is kept separate from
-    serialised representation (snapshot) so storage is replaceable.
-
-    Performance:
-        A prefix index is maintained alongside the entry list so that
-        prefix-scoped reads are O(k) in the number of matching entries
-        rather than O(n) in the total history length. The index is a
-        defaultdict keyed by prefix, holding the list of matching entries
-        in insertion order. Cost: one extra dict write per record() call,
-        zero overhead on reads.
-
-        Tradeoff: the index holds references to the same HistoryEntry
-        objects as _entries, so memory overhead is one pointer per entry,
-        not a full copy. The append-only invariant makes the index safe
-        to maintain incrementally - entries are never mutated or removed,
-        so the index never needs to be rebuilt.
+    A prefix index keeps prefix-scoped reads O(k) rather than O(n).
+    Cost is one extra dict write per record() call.
     """
 
     def __init__(self) -> None:
@@ -86,21 +49,7 @@ class History:
         *,
         timestamp: datetime | None = None,
     ) -> None:
-        """
-        Record a completion selection.
-
-        Parameters:
-            prefix: The user input prefix.
-            value: The completion selected by the user.
-            timestamp: Optional explicit timestamp. If omitted,
-                       the current UTC time is used.
-
-        Notes:
-            - This operation is append-only.
-            - Callers should treat History as write-once per event.
-            - Prefix and value are coerced to strings to enforce
-              persistence and serialisation invariants.
-        """
+        """Record a completion selection. timestamp defaults to now (UTC)."""
         if timestamp is None:
             timestamp = datetime.now(timezone.utc)
 
@@ -126,41 +75,16 @@ class History:
         return len(self._entries)
 
     def entries(self) -> Sequence[HistoryEntry]:
-        """
-        Immutable view of all recorded history entries.
-
-        Returns:
-            A tuple of HistoryEntry objects in insertion order.
-        """
+        """All recorded entries in insertion order."""
         return tuple(self._entries)
 
     def entries_for_prefix(self, prefix: str) -> Sequence[HistoryEntry]:
-        """
-        Return all history entries matching a given prefix.
-
-        O(k) in the number of matching entries via the prefix index.
-
-        Parameters:
-            prefix: The prefix to filter by.
-
-        Returns:
-            A tuple of HistoryEntry objects.
-        """
+        """Return all history entries for a prefix. O(k) via the prefix index."""
         prefix = str(prefix)
         return tuple(self._by_prefix.get(prefix, []))
 
     def counts_for_prefix(self, prefix: str) -> dict[str, int]:
-        """
-        Count how often each value was selected for a given prefix.
-
-        O(k) in the number of matching entries via the prefix index.
-
-        Parameters:
-            prefix: The prefix to aggregate counts for.
-
-        Returns:
-            Mapping of completion value -> selection count.
-        """
+        """Selection counts per value for a given prefix. O(k) via the prefix index."""
         prefix = str(prefix)
         counts: dict[str, int] = defaultdict(int)
 
@@ -174,18 +98,7 @@ class History:
         prefix: str,
         since: datetime,
     ) -> dict[str, int]:
-        """
-        Count selections for a prefix occurring at or after a timestamp.
-
-        O(k) in the number of matching entries via the prefix index.
-
-        Parameters:
-            prefix: The prefix to aggregate counts for.
-            since: Lower bound (inclusive) for entry timestamps.
-
-        Returns:
-            Mapping of completion value -> selection count.
-        """
+        """Like counts_for_prefix but filtered to entries at or after since."""
         if since.tzinfo is None:
             raise ValueError("since must be timezone-aware")
 
@@ -200,24 +113,12 @@ class History:
 
     def count(self, value: str) -> int:
         """
-        Total count for a specific value across all prefixes.
+        Total selections for a value across all prefixes. O(n) full scan.
 
-        WARNING: O(n) full scan of the entire history list. Unlike
-        ``counts_for_prefix()`` which uses the prefix index (O(k)), this
-        method has no index to exploit. Do not call this in hot paths.
-
-        When the prefix is known (which it almost always is), use::
-
+        If you know the prefix (you usually do), prefer:
             counts_for_prefix(prefix).get(value, 0)
 
-        Intended for inspection, diagnostics, and tests only.
-        Not used by any predictor or ranker in this library.
-
-        Parameters:
-            value: Completion value to count.
-
-        Returns:
-            Number of times the value was selected across all prefixes.
+        Not used internally - intended for diagnostics and tests.
         """
         value = str(value)
         return sum(
@@ -231,20 +132,8 @@ class History:
 
     def snapshot(self) -> dict[str, dict[str, int]]:
         """
-        Return a count-only (timestamp-free) view of history data.
-
-        .. deprecated::
-            ``snapshot()`` returns the v1 count-only format and omits
-            timestamps, so recency-aware rankers (``DecayRanker``) lose
-            their signal if this is used for persistence.  For persistence
-            use ``JsonHistoryStore.save()``, which writes the full v2 format
-            with timestamps.  For inspection use ``snapshot_counts()``,
-            which is identical to this method but has a name that makes the
-            lossy nature explicit.
-
-        Format::
-
-            {"<prefix>": {"<value>": count}}
+        Deprecated. Use snapshot_counts() for inspection or JsonHistoryStore
+        for persistence (snapshot() omits timestamps, breaking DecayRanker).
         """
         import warnings
         warnings.warn(
@@ -257,16 +146,10 @@ class History:
 
     def snapshot_counts(self) -> dict[str, dict[str, int]]:
         """
-        Return a count-only (timestamp-free) view of history data.
+        Count-only view of history: {prefix: {value: count}}.
 
-        Timestamps are omitted.  This is useful for inspection and testing
-        but must **not** be used for persistence - it is the v1 storage
-        schema and will cause ``DecayRanker`` to lose all recency signal on
-        the next load.  For persistence, use ``JsonHistoryStore.save()``.
-
-        Format::
-
-            {"<prefix>": {"<value>": count}}
+        Do not use for persistence - timestamps are omitted, which breaks
+        DecayRanker on reload. Use JsonHistoryStore.save() instead.
         """
         snapshot: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -279,20 +162,7 @@ class History:
         }
 
     def __repr__(self) -> str:
-        """Return a diagnostic summary showing entry count and prefix count.
-
-        Useful when inspecting ``engine.history`` or a standalone
-        ``History`` instance in a REPL or trace log.
-
-        Example::
-
-            >>> h = History()
-            >>> h.record("prog", "programming")
-            >>> h.record("prog", "program")
-            >>> h.record("hel", "hello")
-            >>> repr(h)
-            "History(entries=3, prefixes=2)"
-        """
+        """History(entries=3, prefixes=2)"""
         return (
             f"History("
             f"entries={len(self._entries)}, "
@@ -300,20 +170,7 @@ class History:
         )
 
     def copy(self) -> History:
-        """
-        Return an independent deep copy of this History instance.
-
-        The returned History contains the same entries as the original but
-        shares no mutable state - modifications to either (via ``record()``)
-        do not affect the other.
-
-        Uses ``record()`` for each entry so that any validation or secondary
-        index logic in ``record()`` is applied consistently. Direct manipulation
-        of ``_entries`` and ``_by_prefix`` would bypass future changes to
-        ``record()`` and silently diverge.
-
-        O(n) in the number of history entries.
-        """
+        """Return an independent copy. Modifications to either do not affect the other."""
         new_history = History()
         for entry in self._entries:
             new_history.record(entry.prefix, entry.value, timestamp=entry.timestamp)

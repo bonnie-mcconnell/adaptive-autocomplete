@@ -28,19 +28,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class QueryLogEntry:
-    """
-    A single evaluation query with ground-truth relevant completions.
-
-    Attributes:
-        prefix:    The input text the user was typing.
-        relevant:  Set of completions considered correct/relevant for
-                   this prefix. Evaluation metrics treat any result in
-                   this set as a "hit".
-        grades:    Optional graded relevance scores mapping completion
-                   → grade (higher = more relevant). Used by NDCG.
-                   If absent, binary relevance is assumed (all in
-                   ``relevant`` have grade 1.0).
-    """
+    """A single evaluation query: a prefix and the set of relevant completions (ground truth)."""
     prefix: str
     relevant: set[str]
     grades: dict[str, float] = field(default_factory=dict)
@@ -67,16 +55,9 @@ def make_query_log_from_history(
     seed: int = 42,
 ) -> QueryLog:
     """
-    Build a QueryLog from a History object.
+    Build a QueryLog from a History object, using recorded selections as ground truth.
 
-    Uses recorded selections as ground-truth relevant completions. The
-    most realistic evaluation dataset: it reflects actual user choices.
-
-    For each prefix in the history, produces one QueryLogEntry where
-    ``relevant`` is the set of values the user selected at least
-    ``min_count`` times. Values selected fewer times than ``min_count``
-    are excluded (they may have been accidents).
-
+    Produces one QueryLogEntry per prefix. relevant = values selected >= min_count times.
     Grade for each completion = selection_count / max_selection_count
     for that prefix (so the most-selected word gets grade 1.0).
 
@@ -249,15 +230,7 @@ def load_jsonl(path: Path) -> QueryLog:
 
 
 def save_jsonl(log: QueryLog, path: Path) -> None:
-    """
-    Save a QueryLog to a JSONL file.
-
-    Creates parent directories if needed.
-
-    Parameters:
-        log:  QueryLog to save.
-        path: Destination path.
-    """
+    """Save a QueryLog to JSONL. Creates parent directories if needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         for entry in log:
