@@ -53,6 +53,11 @@ def vocabulary_from_text(
 
         vocab = vocabulary_from_text(corpus, min_count=3)
     """
+    if min_count < 1:
+        raise ValueError(f"min_count must be >= 1, got {min_count!r}")
+    if min_length < 1:
+        raise ValueError(f"min_length must be >= 1, got {min_length!r}")
+
     tokens = re.findall(token_pattern, text)
     if lowercase:
         tokens = [t.lower() for t in tokens]
